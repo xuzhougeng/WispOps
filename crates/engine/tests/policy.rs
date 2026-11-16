@@ -52,11 +52,13 @@ fn config_fills_defaults() {
     assert_eq!(config.retention.inspection_records, 1000);
     assert_eq!(config.change.backup_root, "/var/tmp");
     assert_eq!(config.deny_patterns.len(), 3);
-    assert_eq!(config.inventory_file.as_deref(), Some(format!("{}/inventory.yml", config.data_dir).as_str()));
+    // Joined as the system joins paths: a backslash on Windows.
+    let inventory_in = |dir: &str| std::path::Path::new(dir).join("inventory.yml").to_string_lossy().into_owned();
+    assert_eq!(config.inventory_file, Some(inventory_in(&config.data_dir)));
     assert!(config.thresholds.is_object());
     // A custom data directory moves the default inventory file with it; thresholds pass through untouched.
     let custom = Config::resolve(json!({ "dataDir": "/srv/ops", "thresholds": { "diskCritPct": 95 } })).unwrap();
-    assert_eq!(custom.inventory_file.as_deref(), Some("/srv/ops/inventory.yml"));
+    assert_eq!(custom.inventory_file, Some(inventory_in("/srv/ops")));
     assert_eq!(custom.thresholds["diskCritPct"], 95);
     assert_eq!(Config::resolve(json!({ "inventoryFile": null })).unwrap().inventory_file, None);
 }

@@ -188,7 +188,7 @@ fn keeps_the_destination_after_the_double_dash() {
     assert_eq!(argv[argv.len() - 5..], ["-l", "ops", "--", "box", "sh -s"]);
     // Multiplexing puts the control socket under the data directory; extra arguments precede `--`.
     // (A short one: the system's temporary directory is too long for a socket on macOS.)
-    let short = tempfile::Builder::new().prefix("wo").tempdir_in("/tmp").unwrap();
+    let short = if cfg!(unix) { tempfile::Builder::new().prefix("wo").tempdir_in("/tmp").unwrap() } else { tempfile::tempdir().unwrap() };
     let multiplexed = SshRunner::new(SshSpec { control_persist_sec: 60, extra_args: vec!["-4".to_string()], ..spec() }, 1024, short.path());
     let argv = multiplexed.argv(&host("box"), false, false);
     assert!(argv.contains(&"ControlMaster=auto".to_string()) && argv.contains(&"ControlPersist=60s".to_string()));
