@@ -26,6 +26,7 @@ mod scans;
 mod security;
 mod servers;
 mod settings;
+mod sync;
 mod tasks;
 mod theme;
 mod tools;

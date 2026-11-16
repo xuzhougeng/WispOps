@@ -221,6 +221,8 @@ pub enum Cmd {
     PickWebhookKind(&'static str),
     ToggleWebhookEvent(&'static str),
     SetWebhookTasks(&'static str),
+    /// 设置 → WebDAV 设备同步.
+    Sync(crate::sync::SyncCmd),
     // ---- dialogs and menus
     SubmitModal,
     CloseModal,
@@ -271,6 +273,8 @@ pub struct Workspace {
     pub chat: Chat,
     pub skills: Vec<wisp_ops_core::skill::Skill>,
     pub settings_view: crate::settings::SettingsView,
+    /// 设置 → WebDAV 设备同步: its fields and the sync running.
+    pub sync: crate::sync::SyncPage,
     // ---- servers
     pub selected_host: Option<String>,
     pub host_search: Entity<TextInput>,
@@ -342,7 +346,8 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
+        let sync = crate::sync::SyncPage::new(&fleet, cx);
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -619,6 +624,7 @@ impl Workspace {
             }
             Cmd::RevealData => cx.open_with_system(self.fleet.data_dir()),
             Cmd::OpenUrl(url) => cx.open_url(&url),
+            Cmd::Sync(cmd) => self.run_sync(cmd, window, cx),
             Cmd::SubmitModal => self.submit_modal(window, cx),
             Cmd::CloseModal => self.close_modal(window, cx),
             Cmd::Confirmed(cmd) => {
@@ -1062,6 +1068,8 @@ impl Workspace {
             "history" => self.run(Cmd::ToggleHistory, window, cx),
             "find-chat" => self.chat.search.update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)),
             "open-chat" => self.run(Cmd::OpenChat(arg.to_string()), window, cx),
+            // Device sync: `sync:fill=<url>|<user>|<password>|<passphrase>`, `sync:push`, `sync:list`, `sync:preview` (the newest), `sync:pull`, `sync:scroll`.
+            "sync" => self.dev_sync(arg, window, cx),
             "tab" => self.run(Cmd::SetSettingsTab(match arg { "general" => crate::settings::Tab::General, "skills" => crate::settings::Tab::Skills, _ => crate::settings::Tab::Models }), window, cx),
             "shot" => {
                 let path = PathBuf::from(arg);

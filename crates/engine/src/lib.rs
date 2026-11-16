@@ -31,7 +31,13 @@ pub mod ssh;
 pub mod ssh_config;
 /// Audit log, inspection history and other bounded JSON Lines stores.
 pub mod store;
+/// Device sync: encrypted snapshots of the managed state and vault in a WebDAV folder.
+pub mod sync;
+/// The sync snapshot's encrypted envelope (scrypt, XChaCha20-Poly1305), the plugin's format.
+pub mod sync_crypto;
 /// Epoch-millisecond clock helpers and ISO-8601 formatting.
 pub mod time;
 /// The encrypted password vault.
 pub mod vault;
+/// The WebDAV verbs device sync uses, over an injected transport.
+pub mod webdav;

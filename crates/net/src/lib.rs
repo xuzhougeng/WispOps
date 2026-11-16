@@ -8,6 +8,8 @@ use wisp_ops_core::ai::{self, ChatEvent, HttpRequest, Protocol, TurnReader};
 pub mod fetch;
 /// Webhook posts for the outgoing notifications.
 pub mod webhook;
+/// The WebDAV request of device sync.
+pub mod webdav;
 
 const USER_AGENT: &str = concat!("WispOps/", env!("CARGO_PKG_VERSION"));
 
