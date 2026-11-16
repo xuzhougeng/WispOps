@@ -58,11 +58,14 @@ impl Workspace {
             Cmd::EditHost(name) => self.host_dialog(Some(name), cx),
             Cmd::RemoveHost(name) => self.confirm(t("删除服务器"), tf!("从清单里删除 {name}？它的凭据关联和权限设置一并去掉；巡检历史和审计记录保留。", "Remove {name} from the inventory? Its credential links and permission settings go with it; inspection history and audit records stay."), t("删除"), Cmd::RemoveHost(name), cx),
             Cmd::ImportSshConfig => {
-                let rows = self.fleet.import_candidates().into_iter().map(|(alias, target)| (alias, target, false)).collect();
+                let rows = self.fleet.import_candidates().into_iter().map(|(alias, target)| (alias, target, true)).collect();
                 self.open_modal(Modal::Import(ImportForm { rows }), cx);
             }
             Cmd::ToggleImport(at) => {
                 if let Some(Modal::Import(form)) = self.modal.as_mut() && let Some(row) = form.rows.get_mut(at) { row.2 = !row.2 }
+            }
+            Cmd::ToggleImportAll(on) => {
+                if let Some(Modal::Import(form)) = self.modal.as_mut() { form.rows.iter_mut().for_each(|row| row.2 = on) }
             }
             Cmd::ProbeHost(selector) => self.probe_hosts(selector, cx),
             Cmd::InspectHosts(selector) => self.inspect_hosts(selector, false, cx),
@@ -223,7 +226,39 @@ impl Workspace {
 
     /// Probe what the selected servers are (read-only), off the main thread.
     pub fn probe_hosts(&mut self, selector: String, cx: &mut Context<Self>) {
-        self.host_work(selector, cx, |fleet, selector| fleet.probe(selector));
+        let names: Vec<String> = match self.fleet.select_names(&selector) {
+            Ok(names) => names.into_iter().filter(|name| !self.working.contains(name)).collect(),
+            Err(err) => return self.fail(err, cx),
+        };
+        if names.is_empty() { return }
+        self.working.extend(names.iter().cloned());
+        let fleet = self.fleet.clone();
+        let selector = names.join(",");
+        let task = cx.background_executor().spawn(async move { fleet.probe_each(&selector) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                for name in &names { this.working.remove(name); }
+                this.reload(cx);
+                match result {
+                    Ok(results) => {
+                        let failed: Vec<String> = results.iter().filter(|(_, error)| error.is_some()).map(|(host, _)| host.clone()).collect();
+                        // What failed stays on the server's row and in its panel until a probe succeeds.
+                        for (host, error) in results.iter() {
+                            match error {
+                                Some(error) => this.probe_errors.insert(host.clone(), error.clone()),
+                                None => this.probe_errors.remove(host),
+                            };
+                        }
+                        if failed.is_empty() { this.say(tf!("已探测 {} 台服务器", "Probed {} servers", results.len()), cx) } else { this.fail(tf!("{} 台探测失败：{}。原因在服务器的「能力」里。", "The probe failed on {} servers: {}. The reason is under the server's capabilities.", failed.len(), failed.join("、")), cx) }
+                    }
+                    Err(err) => this.fail(err, cx),
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     /// Inspect the selected servers (read-only, no sudo) and write the history.
@@ -340,9 +375,11 @@ impl Workspace {
         let active = self.selected_host.as_ref() == Some(&host.name);
         let state = host.state();
         let working = self.working.contains(&host.name);
-        let facts = match &host.probe {
-            Some(probe) => probe.line(),
-            None => t("未探测").to_string(),
+        let failed = self.probe_errors.get(&host.name);
+        let facts = match (&host.probe, failed) {
+            (_, Some(_)) => t("探测失败").to_string(),
+            (Some(probe), None) => probe.line(),
+            (None, None) => t("未探测").to_string(),
         };
         div()
             .id(SharedString::from(format!("host-{}", host.name)))
@@ -359,9 +396,9 @@ impl Workspace {
             .on_click(self.on(Cmd::SelectHost(if active { None } else { Some(host.name.clone()) }), cx))
             .on_mouse_down(MouseButton::Right, self.on_context(MenuKind::HostActions(host.name.clone()), cx))
             .child(if working { ui::spinner(SharedString::from(format!("host-working-{}", host.name)), 12., Theme::accent()).into_any_element() } else { div().flex_none().size(px(9.)).m(px(1.5)).rounded_full().bg(state_color(state)).into_any_element() })
-            .child(div().flex().flex_col().w(px(200.)).flex_none().child(div().truncate().font_weight(FontWeight::MEDIUM).child(host.name.clone())).child(div().truncate().text_size(text_px(12.)).line_height(text_px(16.)).text_color(Theme::text_tertiary()).child(host.address.clone())))
+            .child(div().flex().flex_col().w(px(200.)).flex_none().child(div().truncate().font_weight(FontWeight::MEDIUM).child(host.name.clone())).child(div().truncate().text_size(text_px(12.)).line_height(text_px(16.)).text_color(Theme::text_tertiary()).child(host.shown_address().to_string())))
             .child(div().flex().flex_none().w(px(150.)).gap(px(4.)).overflow_hidden().children(host.groups.iter().take(3).map(|group| ui::chip(group.clone(), Theme::text_secondary(), Theme::groove()))))
-            .child(div().flex_1().min_w_0().truncate().text_size(text_px(12.)).text_color(Theme::text_secondary()).child(facts))
+            .child(div().id(SharedString::from(format!("host-facts-{}", host.name))).flex_1().min_w_0().truncate().text_size(text_px(12.)).text_color(if failed.is_some() { Theme::danger() } else { Theme::text_secondary() }).when_some(failed.cloned(), |d, error| d.tooltip(ui::tip(error))).child(facts))
             .when(host.blocked_until.is_some(), |d| d.child(ui::status_chip("deny", t("登录已暂停"))))
             .child(ui::ghost_button(SharedString::from(format!("host-menu-{}", host.name)), Some("ellipsis"), None).on_click({
                 let open = self.on_menu(MenuKind::HostActions(host.name.clone()), cx);
@@ -371,6 +408,25 @@ impl Workspace {
                 }
             }))
             .into_any_element()
+    }
+
+    /// Why nothing reaches a server whose logins are paused, with the way out. The pages
+    /// that run something on a server show it where the result would have been.
+    pub fn render_blocked(&self, host: &HostView, place: &str, cx: &mut Context<Self>) -> Option<Div> {
+        let until = host.blocked_until.as_ref()?;
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .p(px(10.))
+                .rounded(px(8.))
+                .bg(Theme::danger_soft())
+                .text_size(text_px(12.))
+                .line_height(text_px(18.))
+                .child(div().flex_1().min_w_0().text_color(Theme::danger()).child(tf!("认证失败，登录暂停到 {}，以免反复登录被当成暴力破解。检查用户名、密钥或凭据后解除。", "Authentication failed; logins are paused until {} so retries are not taken for brute force. Check the user, key or credential, then resume.", time::short_time(until))))
+                .child(ui::secondary_button(SharedString::from(format!("{place}-unblock-{}", host.name)), t("解除")).flex_none().h(text_px(24.)).on_click(self.on(Cmd::UnblockHost(host.name.clone()), cx))),
+        )
     }
 
     /// The panel of the server picked: a column of its own beside the list.
@@ -387,6 +443,7 @@ impl Workspace {
             .text_size(text_px(12.))
             .line_height(text_px(19.))
             .child(fact(t("地址"), host.address.clone()))
+            .when(!host.target.is_empty(), |d| d.child(fact(t("连接到"), host.target.clone())))
             .when(!host.jump.is_empty(), |d| d.child(fact(t("跳板机"), host.jump.clone())))
             .when(!host.identity.is_empty(), |d| d.child(fact(t("私钥"), host.identity.clone())))
             .child(fact(t("来源"), t(host.source_label()).to_string()))
@@ -407,6 +464,11 @@ impl Workspace {
                 .child(fact("Docker", probe.docker.clone()))
                 .child(fact(t("探测于"), time::short_time(&probe.at))),
             None => div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(t("还没有探测过：系统、核数、GPU、调度器和 sudo 是否可用。")),
+        };
+        // The last probe that failed, until one succeeds: a toast alone is gone before it is read.
+        let abilities = match self.probe_errors.get(&host.name) {
+            Some(error) => div().flex().flex_col().gap(px(8.)).child(div().px(px(8.)).py(px(6.)).rounded(px(6.)).bg(Theme::danger_soft()).text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::danger()).child(tf!("上次探测失败：{error}", "The last probe failed: {error}"))).child(abilities),
+            None => abilities,
         };
 
         let permissions = div().flex().flex_col().gap(px(6.)).children(["change", "sudo", "destructive"].iter().enumerate().map(|(n, capability)| {
@@ -451,7 +513,7 @@ impl Workspace {
                     .text_size(text_px(12.))
                     .line_height(text_px(18.))
                     .child(div().flex().items_center().gap(px(8.)).child(ui::status_chip(&run.state, t(state_label(&run.state)))).child(div().text_color(Theme::text_tertiary()).child(time::short_time(&run.at)))).children(run.metrics_line().map(|line| div().text_color(Theme::text_secondary()).child(line)))
-                    .children(problems.into_iter().map(|finding| div().flex().items_start().gap(px(6.)).child(div().flex_none().mt(px(6.)).size(px(6.)).rounded_full().bg(state_color(&finding.severity))).child(div().flex_1().min_w_0().text_color(if finding.muted { Theme::text_tertiary() } else { Theme::text() }).child(finding.message.clone()))))
+                    .children(problems.into_iter().map(|finding| div().flex().items_start().gap(px(6.)).child(div().flex_none().mt(px(6.)).size(px(6.)).rounded_full().bg(state_color(&finding.severity))).child(div().flex_1().min_w_0().text_color(if finding.muted { Theme::text_tertiary() } else { Theme::text() }).child(finding.words()))))
                     .into_any_element()
             }
         };
@@ -492,9 +554,7 @@ impl Workspace {
                     .px(px(14.))
                     .py(px(14.))
                     .gap(px(10.))
-                    .when_some(host.blocked_until.as_ref(), |d, until| {
-                        d.child(div().flex().items_center().gap(px(8.)).p(px(10.)).rounded(px(8.)).bg(Theme::danger_soft()).text_size(text_px(12.)).line_height(text_px(18.)).child(div().flex_1().text_color(Theme::danger()).child(tf!("认证失败，登录暂停到 {}，以免反复登录被当成暴力破解。", "Authentication failed; logins are paused until {} so retries are not taken for brute force.", time::short_time(until)))).child(ui::secondary_button("detail-unblock", t("解除")).h(text_px(24.)).on_click(self.on(Cmd::UnblockHost(name.clone()), cx))))
-                    })
+                    .children(self.render_blocked(host, "detail", cx))
                     .child(
                         div()
                             .flex()

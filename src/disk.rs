@@ -282,7 +282,8 @@ impl Workspace {
                 .on_click(self.on(Cmd::DiskHost(host.name.clone()), cx))
                 .child(if self.disk.scanning.contains(&host.name) { ui::spinner(SharedString::from(format!("disk-scanning-{}", host.name)), 12., Theme::accent()).into_any_element() } else { div().flex_none().size(px(8.)).m(px(2.)).rounded_full().bg(colour).into_any_element() })
                 .child(div().flex_1().min_w_0().truncate().child(host.name.clone()))
-                .children(fullest.map(|pct| div().flex_none().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(format!("{pct:.0}%"))))
+                .children(fullest.filter(|_| host.blocked_until.is_none()).map(|pct| div().flex_none().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(format!("{pct:.0}%"))))
+                .when(host.blocked_until.is_some(), |d| d.child(div().flex_none().text_size(text_px(11.)).text_color(Theme::danger()).child(t("登录已暂停"))))
         }));
         let host = self.disk.host.as_ref().and_then(|name| self.view.hosts.iter().find(|host| &host.name == name));
         let detail = match host {
@@ -312,7 +313,7 @@ impl Workspace {
             .when(plan.is_some() && !scanning, |d| d.child(ui::primary_button("disk-again", t("增量扫描")).h(text_px(28.)).on_click(self.on(Cmd::DiskScan(name.clone(), Scope::Again), cx))))
             .when(!scanning, |d| d.child(ui::secondary_button("disk-home", t("扫描用户目录")).h(text_px(28.)).on_click(self.on(Cmd::DiskScan(name.clone(), Scope::Home), cx))).child(ui::secondary_button("disk-full", t("全盘扫描（root）")).h(text_px(28.)).on_click(self.on(Cmd::AskFullScan(name.clone()), cx))));
         let top = div().flex().flex_col().gap(px(2.)).child(div().flex().items_center().gap(px(12.)).child(div().flex_1().min_w_0().truncate().text_size(text_px(15.)).font_weight(FontWeight::SEMIBOLD).child(name.clone())).child(buttons)).child(div().truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_tertiary()).child(about));
-        let column = div().id("disk-detail").flex().flex_col().flex_1().min_w_0().h_full().overflow_y_scroll().track_scroll(&self.page_scroll).px(px(24.)).py(px(16.)).gap(px(12.)).child(top).when_some(plan.and_then(|plan| plan.last_error.as_ref()), |d, error| d.child(ui::error_line(error)));
+        let column = div().id("disk-detail").flex().flex_col().flex_1().min_w_0().h_full().overflow_y_scroll().track_scroll(&self.page_scroll).px(px(24.)).py(px(16.)).gap(px(12.)).child(top).children(self.render_blocked(host, "disk", cx)).when_some(plan.and_then(|plan| plan.last_error.as_ref()), |d, error| d.child(ui::error_line(error)));
         let Some(scan) = self.disk.scans.iter().find(|scan| scan.path == self.disk.path).or(self.disk.scans.first()) else {
             return column
                 .child(ui::empty_state("hard-drive", t("还没有扫描过这台服务器"), t("第一次扫描建立基线：「扫描用户目录」统计登录账号自己的 home，不需要 root；「全盘扫描」以 root 统计每个本地文件系统。之后按间隔自动增量扫描，并标出哪些目录在增长。")).when(!scanning, |d| d.child(div().flex().gap(px(8.)).child(ui::primary_button("disk-first-home", t("扫描用户目录")).on_click(self.on(Cmd::DiskScan(name.clone(), Scope::Home), cx))).child(ui::secondary_button("disk-first-full", t("全盘扫描（root）")).on_click(self.on(Cmd::AskFullScan(name.clone()), cx))))))
@@ -396,7 +397,7 @@ impl Workspace {
             self.render_disk_list(scan, current, free, cx)
         } else {
             let viewport = window.viewport_size();
-            let chat = if self.settings.chat_hidden { 0. } else { self.chat_width() + 1. };
+            let chat = if self.chat_closed() { 0. } else { self.chat_width() + 1. };
             let width = (f32::from(viewport.width) - SIDEBAR_W - HOSTS_W - chat - 51.).max(260.);
             let height = (f32::from(viewport.height) - 420.).clamp(280., 620.);
             let blocks = blocks_of(current, MAX_BLOCKS, Some, free);
@@ -479,7 +480,9 @@ impl Workspace {
     fn render_disk_list(&self, scan: &ScanView, current: &SpaceNode, free: Option<(f64, f64)>, cx: &mut Context<Self>) -> AnyElement {
         let blocks = blocks_of(current, MAX_ROWS, Some, free);
         let cell = |width: f32| div().w(px(width)).flex_none().text_right();
-        let head = div().flex().items_center().gap(px(10.)).h(text_px(26.)).px(px(8.)).border_b_1().border_color(Theme::line()).text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(div().flex_1().child(t("名称"))).child(cell(84.).child(t("较上次"))).child(cell(70.).child(t("大小"))).child(cell(150.).child(t("占比")));
+        // A first scan has nothing to compare with: its names get the column.
+        let compared = blocks.iter().any(|block| block.node.and_then(|node| scan.delta(node)).is_some());
+        let head = div().flex().items_center().gap(px(10.)).h(text_px(26.)).px(px(8.)).border_b_1().border_color(Theme::line()).text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(div().flex_1().child(t("名称"))).when(compared, |d| d.child(cell(84.).child(t("较上次")))).child(cell(70.).child(t("大小"))).child(cell(150.).child(t("占比")));
         div()
             .flex()
             .flex_col()
@@ -501,8 +504,8 @@ impl Workspace {
                     .text_size(text_px(12.))
                     .when_some(opens, |d, path| d.cursor_pointer().hover(|s| s.bg(Theme::hover())).on_click(self.on(Cmd::DiskZoom(path), cx)))
                     .child(div().flex_none().size(px(10.)).rounded(px(3.)).when(block.kind == Kind::Free, |d| d.border_1().border_dashed().border_color(Theme::line_strong())).when(block.kind != Kind::Free, |d| d.bg(colour.opacity(0.7))))
-                    .child(div().flex().flex_1().min_w_0().gap(px(6.)).child(div().truncate().when(block.kind == Kind::Dir, |d| d.text_size(text_px(13.))).when(block.kind != Kind::Dir, |d| d.text_color(Theme::text_secondary())).child(block.label.clone())).children(block.node.filter(|node| !node.children.is_empty()).map(|node| div().flex_none().text_color(Theme::text_placeholder()).child(tf!("{} 个子目录", "{} subdirectories", node.children.len())))))
-                    .child(cell(84.).text_color(if delta.is_some_and(|delta| delta > 0.) { Theme::warning() } else { Theme::success() }).children(delta.map(delta_words)))
+                    .child(div().flex().flex_1().min_w_0().gap(px(6.)).child(div().flex_shrink_0().max_w_full().truncate().when(block.kind == Kind::Dir, |d| d.text_size(text_px(13.))).when(block.kind != Kind::Dir, |d| d.text_color(Theme::text_secondary())).child(block.label.clone())).children(block.node.filter(|node| !node.children.is_empty()).map(|node| div().flex_1().min_w_0().truncate().text_color(Theme::text_placeholder()).child(tf!("{} 个子目录", "{} subdirectories", node.children.len())))))
+                    .when(compared, |d| d.child(cell(84.).text_color(if delta.is_some_and(|delta| delta > 0.) { Theme::warning() } else { Theme::success() }).children(delta.map(delta_words))))
                     .child(cell(70.).font_family(theme::MONO_FONT).child(format_kb(block.kb)))
                     .child(div().flex().flex_none().items_center().justify_end().gap(px(8.)).w(px(150.)).child(div().w(px(90.)).h(px(6.)).rounded_full().bg(Theme::groove()).child(div().h_full().w(relative(portion.clamp(0., 1.))).rounded_full().bg(colour.opacity(0.7)))).child(div().w(px(44.)).text_right().child(share(block.kb, block.of))))
             }))

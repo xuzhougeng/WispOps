@@ -695,10 +695,14 @@ impl Workspace {
         let chat = &self.chat;
         let profile = self.settings.chat_profile();
         let configured = profile.as_ref().is_some_and(|profile| !profile.key().is_empty());
+        // A service that is listed but has no key is not "no model": say which one, and what it lacks.
+        let keyless = profile.as_ref().filter(|_| !configured).map(|profile| profile.labelled());
         let model = profile.map(|profile| profile.title()).unwrap_or_default();
         let grants = self.fleet.grants(&chat.session);
         let full = self.fleet.grant_store().is_full(&chat.session);
-        let body = if !configured && chat.messages.is_empty() {
+        let body = if let Some(model) = keyless.filter(|_| chat.messages.is_empty()) {
+            ui::empty_state("sparkle", &tf!("{model} 还缺 API Key", "{model} has no API key yet"), t("模型服务已经列好，但还没有填 API Key（对应的环境变量也没有设置），助手问不了它。API Key 只保存在本机。不配置模型也可以用左边的页面巡检和管理服务器。")).child(ui::primary_button("chat-settings", t("去填 API Key")).on_click(self.on(Cmd::SetPage(Page::Settings), cx))).into_any_element()
+        } else if !configured && chat.messages.is_empty() {
             ui::empty_state("sparkle", t("还没有配置模型"), t("助手需要一个模型服务：Claude API，或任何 OpenAI 兼容的服务。API Key 只保存在本机。不配置模型也可以用左边的页面巡检和管理服务器。")).child(ui::primary_button("chat-settings", t("打开设置")).on_click(self.on(Cmd::SetPage(Page::Settings), cx))).into_any_element()
         } else if chat.messages.is_empty() && chat.error.is_empty() {
             self.render_start(cx)

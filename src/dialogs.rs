@@ -346,6 +346,10 @@ impl Workspace {
                     .flex_col()
                     .gap(px(8.))
                     .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("勾选要加入清单的 Host 别名。导入的服务器通过别名连接，密钥、跳板机等仍由 ssh_config 决定；通配模式和 Match 块不会列出。")))
+                    .when(form.rows.len() > 1, |d| {
+                        let all = form.rows.iter().all(|row| row.2);
+                        d.child(div().flex().child(ui::ghost_button("import-all", None, Some(if all { t("全不选") } else { t("全选") }.into())).h(text_px(24.)).text_size(text_px(12.)).text_color(Theme::accent()).on_click(self.on(Cmd::ToggleImportAll(!all), cx))))
+                    })
                     .child(div().id("import-rows").flex().flex_col().max_h(px(360.)).overflow_y_scroll().children(form.rows.iter().enumerate().map(|(n, (alias, target, ticked))| {
                         div()
                             .id(("import", n))
@@ -369,6 +373,8 @@ impl Workspace {
             Modal::Task(form) => self.task_form_body(form, window, cx),
         };
         let reading = label.is_none();
+        // An import with nothing ticked has nothing to do: the button says so before it is pressed.
+        let idle = matches!(&self.modal, Some(Modal::Import(form)) if !form.rows.iter().any(|row| row.2));
         Some(
             div()
                 .id("modal-layer")
@@ -400,7 +406,7 @@ impl Workspace {
                                     d.child(ui::secondary_button("modal-copy", t("复制")).on_click(self.on(Cmd::CopyText(text), cx)))
                                 })
                                 .child(ui::secondary_button("modal-cancel", if reading { t("关闭") } else { t("取消") }).on_click(self.on(Cmd::CloseModal, cx)))
-                                .when_some(label, |d, label| d.child(ui::primary_button("modal-submit", label).when(danger, |b| b.bg(Theme::danger())).on_click(self.on(Cmd::SubmitModal, cx)))),
+                                .when_some(label, |d, label| d.child(ui::primary_button("modal-submit", label).when(danger, |b| b.bg(Theme::danger())).when(idle, |b| b.opacity(0.5)).on_click(self.on(Cmd::SubmitModal, cx)))),
                         ),
                 )
                 .into_any_element(),

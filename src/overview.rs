@@ -18,6 +18,8 @@ use wisp_ops_core::time;
 pub const RUNS_SHOWN: usize = 30;
 /// The mounts a server's panel draws, the fullest first.
 const MOUNTS_SHOWN: usize = 8;
+/// The servers "需要关注" lists before it points at the table below.
+const ATTENTION_ROWS: usize = 6;
 
 /// The colour of a measure against its (warning, critical) thresholds.
 fn level(value: f64, limits: (f64, f64)) -> Hsla {
@@ -52,7 +54,7 @@ impl Workspace {
                 .into_any_element();
         }
         // The page's own width: the window less the sidebar and the assistant.
-        let inner = f32::from(window.viewport_size().width) - SIDEBAR_W - if self.settings.chat_hidden { 0. } else { self.chat_width() } - 122.;
+        let inner = f32::from(window.viewport_size().width) - SIDEBAR_W - if self.chat_closed() { 0. } else { self.chat_width() } - 122.;
         let room = Room { squares: if inner >= 900. { RUNS_SHOWN } else if inner >= 600. { 12 } else { 0 }, memory: inner >= 600., load: inner >= 750. };
 
         let total = hosts.len().max(1) as f32;
@@ -75,17 +77,23 @@ impl Workspace {
         let rank = |state: &str| match state { "crit" => 0, "unreachable" => 1, "warn" => 2, "info" => 3, "ok" => 4, _ => 5 };
         rows.sort_by(|a, b| rank(a.state()).cmp(&rank(b.state())).then(a.name.cmp(&b.name)));
 
-        // What the latest inspections found, the worst first.
-        let mut found: Vec<(&HostView, &str, &str)> = rows.iter().flat_map(|host| host.runs.last().into_iter().flat_map(move |run| run.findings.iter().filter(|finding| !finding.muted && finding.severity != "info").map(move |finding| (*host, finding.severity.as_str(), finding.message.as_str())))).collect();
-        found.sort_by_key(|(_, severity, _)| rank(severity));
-        let more = found.len().saturating_sub(6);
+        // What the latest inspections found: a line a server, the worst server and its worst finding first.
+        let mut found: Vec<(&HostView, Vec<&crate::ops::FindingView>)> = rows.iter().filter_map(|host| {
+            let mut problems: Vec<_> = host.runs.last()?.findings.iter().filter(|finding| !finding.muted && finding.severity != "info").collect();
+            problems.sort_by_key(|finding| rank(&finding.severity));
+            (!problems.is_empty()).then_some((*host, problems))
+        }).collect();
+        found.sort_by_key(|(_, problems)| rank(&problems[0].severity));
+        let total_found: usize = found.iter().map(|(_, problems)| problems.len()).sum();
+        let more = found.len().saturating_sub(ATTENTION_ROWS);
         let attention = (!found.is_empty()).then(|| {
             ui::panel()
                 .px(px(16.))
                 .py(px(12.))
                 .gap(px(6.))
-                .child(ui::panel_head(t("需要关注").to_string(), tf!("最近一次巡检的 {} 项发现", "{} findings in the latest inspections", found.len())))
-                .children(found.iter().take(6).enumerate().map(|(n, (host, severity, message))| {
+                .child(ui::panel_head(t("需要关注").to_string(), tf!("最近一次巡检：{} 台服务器的 {} 项发现", "The latest inspections: {1} findings on {0} servers", found.len(), total_found)))
+                .children(found.iter().take(ATTENTION_ROWS).enumerate().map(|(n, (host, problems))| {
+                    let words = problems.iter().take(3).map(|finding| finding.words()).collect::<Vec<_>>().join(if crate::i18n::is_english() { "; " } else { "；" });
                     div()
                         .id(("attention", n))
                         .flex()
@@ -99,11 +107,12 @@ impl Workspace {
                         .cursor_pointer()
                         .hover(|s| s.bg(Theme::hover()))
                         .on_click(self.on(Cmd::OpenHost(host.name.clone()), cx))
-                        .child(div().flex_none().size(px(6.)).rounded_full().bg(state_color(severity)))
+                        .child(div().flex_none().size(px(6.)).rounded_full().bg(state_color(&problems[0].severity)))
                         .child(div().flex_none().w(px(120.)).truncate().font_weight(FontWeight::MEDIUM).child(host.name.clone()))
-                        .child(div().flex_1().min_w_0().truncate().text_color(Theme::text_secondary()).child(message.to_string()))
+                        .child(div().flex_1().min_w_0().truncate().text_color(Theme::text_secondary()).child(words))
+                        .child(div().flex_none().text_color(Theme::text_tertiary()).child(if problems.len() == 1 && crate::i18n::is_english() { "1 finding".to_string() } else { tf!("{} 项", "{} findings", problems.len()) }))
                 }))
-                .when(more > 0, |d| d.child(div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("还有 {more} 项，点开服务器查看", "{more} more: open a server to see them"))))
+                .when(more > 0, |d| d.child(div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("还有 {more} 台，在下面的列表里", "{more} more servers in the list below"))))
         });
 
         let label = |words: &str| div().text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(t(words).to_string());
@@ -191,7 +200,7 @@ impl Workspace {
             Some(load) => div().flex().items_center().gap(px(6.)).text_size(text_px(12.)).child(div().flex_none().size(px(6.)).rounded_full().bg(level(load / cores.unwrap_or(1.), if cores.is_some() { limits.load_per_core } else { (f64::MAX, f64::MAX) }))).child(div().text_color(Theme::text_secondary()).child(format!("{load:.2}"))).children(latest.and_then(|run| run.gpu_util_pct).map(|gpu| div().truncate().text_color(Theme::text_tertiary()).child(format!("GPU {gpu:.0}%")))),
             None => quiet("—".into()),
         };
-        let about = host.probe.as_ref().map(|probe| probe.line()).unwrap_or_else(|| host.address.clone());
+        let about = host.probe.as_ref().map(|probe| probe.line()).unwrap_or_else(|| host.shown_address().to_string());
         div()
             .flex()
             .flex_col()
@@ -252,7 +261,7 @@ impl Workspace {
         let span = |values: &[Option<f64>]| values.iter().flatten().fold(None, |range: Option<(f64, f64)>, value| Some(range.map_or((*value, *value), |(low, high)| (low.min(*value), high.max(*value)))));
         let percent = |value: f64| format!("{value:.0}%");
         // The times the lines run between, under a chart.
-        let axis = || div().flex().justify_between().text_size(text_px(10.)).line_height(text_px(13.)).text_color(Theme::text_placeholder()).child(runs.first().map(|run| time::short_time(&run.at)).unwrap_or_default()).child(runs.last().map(|run| time::short_time(&run.at)).unwrap_or_default());
+        let axis = || div().when(runs.len() < 2, |d| d.opacity(0.)).flex().justify_between().text_size(text_px(10.)).line_height(text_px(13.)).text_color(Theme::text_placeholder()).child(runs.first().map(|run| time::short_time(&run.at)).unwrap_or_default()).child(runs.last().map(|run| time::short_time(&run.at)).unwrap_or_default());
         let card = |title: &str| ui::panel().flex_1().min_w_0().gap(px(6.)).px(px(14.)).py(px(12.)).child(ui::caption(t(title).to_string()));
         let figure = |value: String, unit: &str| div().flex().items_end().gap(px(4.)).child(div().text_size(text_px(22.)).line_height(text_px(26.)).font_weight(FontWeight::SEMIBOLD).child(value)).child(div().pb(px(3.)).text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(unit.to_string()));
         let note = |words: String| div().truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_secondary()).child(words);
@@ -274,7 +283,7 @@ impl Workspace {
                     .text_size(text_px(12.))
                     .line_height(text_px(18.))
                     .child(div().flex().items_center().gap(px(8.)).child(ui::status_chip(&run.state, t(state_label(&run.state)))).child(div().text_color(Theme::text_tertiary()).child(if picked.is_some() { tf!("{} 的巡检", "inspection of {}", time::short_time(&run.at)) } else { tf!("最近一次巡检 · {}", "latest inspection · {}", time::short_time(&run.at)) })).when(problems.is_empty(), |d| d.child(div().text_color(Theme::text_tertiary()).child(t(if run.state == "unreachable" { "这次没有连上服务器。" } else { "这次巡检没有发现问题。" }).to_string()))))
-                    .children(problems.iter().map(|finding| div().flex().items_start().gap(px(6.)).child(div().flex_none().mt(px(6.)).size(px(6.)).rounded_full().bg(state_color(&finding.severity))).child(div().flex_1().min_w_0().text_color(if finding.muted { Theme::text_tertiary() } else { Theme::text() }).child(finding.message.clone())))),
+                    .children(problems.iter().map(|finding| div().flex().items_start().gap(px(6.)).child(div().flex_none().mt(px(6.)).size(px(6.)).rounded_full().bg(state_color(&finding.severity))).child(div().flex_1().min_w_0().text_color(if finding.muted { Theme::text_tertiary() } else { Theme::text() }).child(finding.words())))),
             )
             .child(links);
 
@@ -299,7 +308,7 @@ impl Workspace {
                     .child(div().flex().flex_none().items_center().w(px(90.)).child(ui::meter(*pct, level(*pct, limits.disk))))
                     .child(div().flex().flex_none().justify_end().w(px(36.)).font_weight(FontWeight::MEDIUM).child(percent(*pct)))
                     .child(div().flex_1().min_w(px(60.)).child(ui::trend(&format!("disk-{name}-{n}"), values.clone(), tips(&values, &percent), 100., level(*pct, limits.disk), 26.)))
-                    .child(div().flex().flex_none().justify_end().w(px(62.)).text_color(if moved && change > 0. { Theme::text() } else { Theme::text_tertiary() }).child(if moved { tf!("{change:+.1} 点", "{change:+.1} pts") } else { t("持平").to_string() }))
+                    .child(div().flex().flex_none().justify_end().w(px(62.)).text_color(if moved && change > 0. { Theme::text() } else { Theme::text_tertiary() }).child(if moved { tf!("{change:+.1} 点", "{change:+.1} pts") } else if runs.len() < 2 { String::new() } else { t("持平").to_string() }))
             }))
             .when(hidden > 0, |d| d.child(note(tf!("另有 {hidden} 个挂载点未列出", "{hidden} more mounts not listed"))))
             .when(!mounts.is_empty(), |d| d.child(div().pl(px(276.)).pr(px(72.)).child(axis())));

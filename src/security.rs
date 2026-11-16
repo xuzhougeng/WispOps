@@ -123,6 +123,8 @@ impl Workspace {
 
     fn render_attack_row(&self, host: &str, cx: &mut Context<Self>) -> AnyElement {
         let row = self.view.attacks.get(host);
+        // A server whose logins are paused cannot be triaged: the row says so instead of "not triaged".
+        let paused = self.view.hosts.iter().find(|shown| shown.name == host).filter(|shown| shown.blocked_until.is_some());
         let working = self.attack_working.contains(host);
         let open = self.open_attack.as_deref() == Some(host);
         // A triage that could not read the auth log has not cleared the server of anything.
@@ -160,7 +162,8 @@ impl Workspace {
             .child(div().w(px(150.)).flex_none().truncate().font_weight(FontWeight::MEDIUM).child(host.to_string()))
             .child(chart)
             .child(div().flex_1().min_w_0().truncate().text_size(text_px(12.)).text_color(if row.is_some_and(|row| failed(row) > 0.) { Theme::text() } else { Theme::text_tertiary() }).child(words))
-            .children(row.filter(|row| !row.report.full_visibility).map(|_| ui::status_chip("warn", t("非 root"))))
+            .children(paused.map(|_| ui::status_chip("deny", t("登录已暂停"))))
+            .children(row.filter(|row| !row.report.full_visibility).map(|_| div().id(SharedString::from(format!("attack-partial-{host}"))).flex_none().tooltip(ui::tip(t("这次排查不是以 root 运行的：其他用户的进程和连接可能看不到。关联 sudo 凭据后重新排查。"))).child(ui::status_chip("warn", t("非 root")))))
             .children(row.filter(|row| !row.attacks.banned.is_empty()).map(|row| ui::status_chip("info", &tf!("已封禁 {}", "{} banned", row.attacks.banned.len()))))
             .children(row.map(|row| div().flex_none().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(time::short_time(&row.at))))
             .child(ui::icon_action(SharedString::from(format!("attack-scan-{host}")), "loader", Theme::text_tertiary(), t("重新排查")).on_click({
@@ -170,7 +173,7 @@ impl Workspace {
                     scan(event, window, cx);
                 }
             }));
-        div().flex().flex_col().border_b_1().border_color(Theme::line()).child(line).children(row.filter(|_| open).map(|row| self.render_attack_detail(host, row, cx))).into_any_element()
+        div().flex().flex_col().border_b_1().border_color(Theme::line()).child(line).children(paused.filter(|_| open || row.is_none()).and_then(|shown| self.render_blocked(shown, "attack", cx)).map(|banner| banner.ml(px(21.)).mb(px(10.)))).children(row.filter(|_| open).map(|row| self.render_attack_detail(host, row, cx))).into_any_element()
     }
 
     /// A triage laid open: who attacks, with which names, who got in, and the other leads.
@@ -194,9 +197,11 @@ impl Workspace {
             .when(rows.is_empty(), |d| d.child(div().text_color(Theme::text_tertiary()).child(t("没有"))))
         };
         let by_source: &[SourceCount] = if row.attacks.by_source.is_empty() { &report.failed_by_source } else { &row.attacks.by_source };
-        let logins = div().flex().flex_col().flex_1().min_w_0().gap(px(3.)).child(ui::caption(t("登录成功"))).children(report.accepted.iter().take(8).map(|login| {
+        let logins = div().flex().flex_col().flex_1().min_w_0().gap(px(3.)).child(ui::caption(t("登录成功"))).children(report.accepted.iter().take(8).enumerate().map(|(at, login)| {
             let alarm = report.failed_by_source.iter().any(|source| source.source == login.source && source.count >= 20.);
-            div().flex().items_center().gap(px(8.)).h(text_px(22.)).child(div().flex_1().min_w_0().truncate().text_color(if alarm { Theme::danger() } else { Theme::text() }).child(format!("{} ← {}", login.user, login.source))).child(div().flex_none().text_color(Theme::text_tertiary()).child(format!("{} × {}", login.method, n(login.count))))
+            let (who, how) = (format!("{} ← {}", login.user, login.source), format!("{} × {}", login.method, n(login.count)));
+            // Who got in and from where is what must be read whole: the method gives way to it.
+            div().id(SharedString::from(format!("attack-login-{host}-{at}"))).flex().items_center().gap(px(8.)).h(text_px(22.)).tooltip(ui::tip(format!("{who} · {how}"))).child(div().flex_shrink_0().max_w_full().truncate().text_color(if alarm { Theme::danger() } else { Theme::text() }).child(who)).child(div().flex_1().min_w_0().truncate().text_right().text_color(Theme::text_tertiary()).child(how))
         }))
         .when(report.accepted.is_empty(), |d| d.child(div().text_color(Theme::text_tertiary()).child(t("没有"))));
         let findings: Vec<_> = report.findings.iter().filter(|finding| finding.severity != Severity::Info).collect();
@@ -217,7 +222,7 @@ impl Workspace {
                 d.child(div().flex().items_center().gap(px(10.)).child(div().flex_1().min_w_0().text_color(Theme::warning()).child(t("这次排查不是以 root 运行的，读不到 SSH 认证日志，所以没有登录失败的统计。给这台服务器关联 sudo 凭据（或用 root 登录、配置免密 sudo 后重新探测），再排查一次。"))).child(ui::secondary_button("attack-bind", t("关联 sudo 凭据")).h(text_px(26.)).on_click(self.on(Cmd::BindCredential(host.to_string(), true), cx))))
             })
             .when(report.auth_log_readable, |d| d.child(div().flex().gap(px(24.)).child(counted(t("攻击来源").to_string(), by_source, &accepted_from, true)).child(counted(t("尝试的账号").to_string(), &row.attacks.by_user, &|_| false, true)).child(logins)))
-            .when(!findings.is_empty(), |d| d.child(div().flex().flex_col().gap(px(4.)).child(ui::caption(t("发现"))).children(findings.iter().map(|finding| div().flex().items_start().gap(px(6.)).child(div().flex_none().mt(px(6.)).size(px(6.)).rounded_full().bg(state_color(finding.severity.as_str()))).child(div().flex_1().min_w_0().child(finding.message.clone()))))))
+            .when(!findings.is_empty(), |d| d.child(div().flex().flex_col().gap(px(4.)).child(ui::caption(t("发现"))).children(findings.iter().map(|finding| div().flex().items_start().gap(px(6.)).child(div().flex_none().mt(px(6.)).size(px(6.)).rounded_full().bg(state_color(finding.severity.as_str()))).child(div().flex_1().min_w_0().child(crate::findings::words(&finding.code, &finding.message)))))))
             .when(findings.is_empty() && report.auth_log_readable, |d| d.child(div().text_color(Theme::text_tertiary()).child(t("除登录尝试外，这次排查没有发现可疑迹象。"))))
             .child(
                 div()

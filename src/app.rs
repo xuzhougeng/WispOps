@@ -123,6 +123,8 @@ pub enum Cmd {
     RemoveHost(String),
     ImportSshConfig,
     ToggleImport(usize),
+    /// Tick every row of the import dialog, or none.
+    ToggleImportAll(bool),
     ProbeHost(String),
     InspectHosts(String),
     UnblockHost(String),
@@ -253,6 +255,11 @@ pub struct Workspace {
     pub host_search: Entity<TextInput>,
     /// The hosts being probed or inspected from the window right now.
     pub working: HashSet<String>,
+    /// The assistant's panel stays folded while there is no model it could use, until it is asked for:
+    /// a third of the window for "no model configured" on every page is a poor first sight.
+    pub chat_parked: bool,
+    /// Why the last capability probe of a host failed, until one succeeds.
+    pub probe_errors: HashMap<String, String>,
     // ---- overview: the inspection of a host that is on show (host, its place in the history).
     pub selected_run: Option<(String, usize)>,
     /// The server whose charts are open in the overview.
@@ -311,7 +318,7 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -527,7 +534,10 @@ impl Workspace {
             }
             // On the assistant's own page there is no panel to fold: the shortcut goes back to the page it came from.
             Cmd::ToggleChat if self.page == Page::Assistant => self.run(Cmd::SetPage(self.chat.back), window, cx),
+            // Parked for want of a model, the panel is closed whatever the setting says: the first press opens it.
+            Cmd::ToggleChat if self.chat_closed() && !self.settings.chat_hidden => self.chat_parked = false,
             Cmd::ToggleChat => {
+                self.chat_parked = false;
                 self.settings.chat_hidden = !self.settings.chat_hidden;
                 self.save_settings(cx);
             }
@@ -590,7 +600,7 @@ impl Workspace {
                 self.modal = None;
                 self.run_confirmed(*cmd, window, cx);
             }
-            cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::BindNewCredential | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
+            cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ToggleImportAll(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::BindNewCredential | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
             cmd @ (Cmd::DiskHost(_) | Cmd::AskFullScan(_) | Cmd::DiskScan(..) | Cmd::DiskPath(_) | Cmd::DiskZoom(_) | Cmd::DiskList(_) | Cmd::ToggleDiskFree) => self.run_disk(cmd, cx),
             Cmd::CheckLongJobs(selector) => self.check_long_jobs(selector, false, cx),
             cmd @ (Cmd::ToggleLongHost(_) | Cmd::FoldLongHosts(_) | Cmd::LongUser(..) | Cmd::LongFilter(..)) => self.run_longrun(cmd, cx),
@@ -674,10 +684,21 @@ impl Workspace {
 
     /// Bring the panel back, unless the assistant's own page is open: there the conversation is on show already.
     pub fn show_chat(&mut self, cx: &mut Context<Self>) {
+        self.chat_parked = false;
         if self.settings.chat_hidden && self.page != Page::Assistant {
             self.settings.chat_hidden = false;
             self.save_settings(cx);
         }
+    }
+
+    /// Whether a model is set up that the assistant could ask: one with a key.
+    pub fn chat_configured(&self) -> bool {
+        self.settings.chat_profile().is_some_and(|profile| !profile.key().is_empty())
+    }
+
+    /// Whether the assistant's panel is folded away: by choice, or parked until there is a model to talk to.
+    pub fn chat_closed(&self) -> bool {
+        self.settings.chat_hidden || (self.chat_parked && !self.chat_configured())
     }
 
     pub fn chat_width(&self) -> f32 {
@@ -730,7 +751,7 @@ impl Render for Workspace {
             Page::Settings => self.render_settings(window, cx),
         };
         // The assistant's page draws the conversation itself: the panel (and its edge) is left out, whatever `chat_hidden` says.
-        let chat_shown = !self.settings.chat_hidden && self.page != Page::Assistant;
+        let chat_shown = !self.chat_closed() && self.page != Page::Assistant;
         let chat = chat_shown.then(|| self.render_chat(window, cx));
         let chat_width = self.chat_width();
         div()
@@ -819,8 +840,8 @@ impl Workspace {
                 .on_click(this.on(Cmd::SetPage(page), cx))
                 .child(ui::icon(page.icon(), 15., if active { Theme::accent() } else { Theme::text_secondary() }))
                 .child(div().flex_1().min_w_0().truncate().child(t(page.title())))
-                // A number only where something waits to be looked at.
-                .when_some(count.filter(|count| *count > 0), |d, count| d.child(div().flex_none().text_size(text_px(12.)).text_color(Theme::danger()).child(count.to_string())))
+                // A number only where something waits to be looked at; red is for trouble, and long tasks are mostly not that.
+                .when_some(count.filter(|count| *count > 0), |d, count| d.child(div().flex_none().text_size(text_px(12.)).text_color(if page == Page::LongJobs { Theme::text_tertiary() } else { Theme::danger() }).child(count.to_string())))
         };
         let troubled = self.view.hosts.iter().filter(|host| matches!(host.state(), "crit" | "unreachable")).count();
         let long = self.long_jobs_shown().iter().map(|(_, jobs)| jobs.len()).sum();
@@ -911,7 +932,7 @@ impl Workspace {
             .gap(px(8.))
             .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().text_size(text_px(ui::HEAD_TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string())).child(div().truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_tertiary()).child(about.into())))
             .children(actions)
-            .when(self.settings.chat_hidden && self.page != Page::Assistant, |d| d.child(ui::ghost_button("open-assistant", Some("message-square"), Some(t("助手").into())).tooltip(ui::tip(t("打开助手"))).on_click(self.on(Cmd::FocusChat, cx))))
+            .when(self.chat_closed() && self.page != Page::Assistant, |d| d.child(ui::ghost_button("open-assistant", Some("message-square"), Some(t("助手").into())).tooltip(ui::tip(t("打开助手"))).on_click(self.on(Cmd::FocusChat, cx))))
     }
 }
 
@@ -994,6 +1015,10 @@ impl Workspace {
             "attack-scan" => self.run(Cmd::ScanAttacks(arg.to_string()), window, cx),
             "open-attack" => self.run(Cmd::OpenAttack(arg.to_string()), window, cx),
             "add-host" => self.run(Cmd::AddHost, window, cx),
+            // The import dialog, a tick on its nth row, and a capability probe: `import`, `toggle-import:0`, `probe:all`.
+            "import" => self.run(Cmd::ImportSshConfig, window, cx),
+            "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
+            "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),

@@ -187,12 +187,38 @@ fn keeps_the_destination_after_the_double_dash() {
     let argv = runner.argv(&sudo, false, false);
     assert_eq!(argv[argv.len() - 5..], ["-l", "ops", "--", "box", "sh -s"]);
     // Multiplexing puts the control socket under the data directory; extra arguments precede `--`.
-    let multiplexed = SshRunner::new(SshSpec { control_persist_sec: 60, extra_args: vec!["-4".to_string()], ..spec() }, 1024, dir.path());
+    // (A short one: the system's temporary directory is too long for a socket on macOS.)
+    let short = tempfile::Builder::new().prefix("wo").tempdir_in("/tmp").unwrap();
+    let multiplexed = SshRunner::new(SshSpec { control_persist_sec: 60, extra_args: vec!["-4".to_string()], ..spec() }, 1024, short.path());
     let argv = multiplexed.argv(&host("box"), false, false);
     assert!(argv.contains(&"ControlMaster=auto".to_string()) && argv.contains(&"ControlPersist=60s".to_string()));
-    assert!(argv.contains(&format!("ControlPath={}", dir.path().join("cm").join("%C").display())));
+    assert!(argv.contains(&format!("ControlPath={}", short.path().join("cm").join("%C").display())));
     assert_eq!(argv[argv.len() - 4..], ["-4", "--", "box", "sh -s"]);
-    assert!(dir.path().join("cm").is_dir());
+    assert!(short.path().join("cm").is_dir());
+}
+
+/// A Unix socket path holds about a hundred bytes: under a long data folder ssh would refuse
+/// every connection with "ControlPath too long", so the sockets go to a short private directory.
+#[cfg(unix)]
+#[test]
+fn keeps_the_control_socket_short_under_a_long_data_folder() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = tempfile::tempdir().unwrap();
+    let deep = dir.path().join("a-data-folder-with-a-name-long-enough-to-overflow-what-a-unix-socket-path-can-hold");
+    std::fs::create_dir_all(&deep).unwrap();
+    let control_path = |data: &std::path::Path| {
+        let runner = SshRunner::new(SshSpec { control_persist_sec: 60, ..spec() }, 1024, data);
+        runner.argv(&host("box"), false, false).into_iter().find_map(|arg| arg.strip_prefix("ControlPath=").map(str::to_string)).expect("multiplexing stays on")
+    };
+    let path = control_path(&deep);
+    let uid = std::fs::metadata(dir.path()).unwrap().uid();
+    assert!(path.starts_with(&format!("/tmp/wispops-{uid}/")) && path.ends_with("-%C"), "{path}");
+    // `%C` is 40 characters and ssh adds 17 while the master starts: all of it fits in 104 bytes.
+    assert!(path.len() - 2 + 40 + 17 < 104, "{path}");
+    assert_eq!(std::fs::metadata(format!("/tmp/wispops-{uid}")).unwrap().mode() & 0o777, 0o700);
+    // The same data folder gets the same sockets; another one, its own.
+    assert_eq!(control_path(&deep), path);
+    assert_ne!(control_path(&deep.join("other")), path);
 }
 
 #[test]
