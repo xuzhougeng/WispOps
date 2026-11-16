@@ -276,6 +276,31 @@ fn gate_allows_read_only_policy_and_grants_and_refuses_denials() {
 }
 
 #[test]
+fn full_permission_lifts_every_ask_of_its_session_but_never_a_deny() {
+    let config = Config::resolve(json!({ "inventoryFile": null, "hosts": [{ "name": "a" }, { "name": "b", "policy": { "destructive": "deny" } }] })).unwrap();
+    let inventory = Inventory::load(&config, &[], Some(&ManagedState::default())).unwrap();
+    let deny = DenyList::compile(&config.deny_patterns).unwrap();
+    let grants = GrantStore::new();
+    let a = inventory.select("a").unwrap();
+    let destructive = classify_command("rm -rf /tmp/x", &no_extra());
+    assert!(matches!(gate_at(&a, &destructive, true, false, &[], Some("s"), &grants, &deny, 0), GateOutcome::Ask { .. }));
+    grants.add_full("s");
+    assert!(grants.is_full("s") && !grants.is_full("other"));
+    assert!(matches!(gate_at(&a, &destructive, true, false, &[], Some("s"), &grants, &deny, 0), GateOutcome::Allow { ref voucher } if voucher.authorization == Authorization::Full));
+    assert!(matches!(gate_at(&a, &destructive, true, false, &[], Some("other"), &grants, &deny, 0), GateOutcome::Ask { .. }));
+    assert!(matches!(gate_at(&a, &destructive, true, false, &[], None, &grants, &deny, 0), GateOutcome::Ask { .. }));
+    // Policy deny and the deny list still refuse.
+    let b = inventory.select("b").unwrap();
+    assert!(matches!(gate_at(&b, &destructive, false, false, &[], Some("s"), &grants, &deny, 0), GateOutcome::Deny { .. }));
+    let wipe = vec!["rm -rf /".to_string()];
+    assert!(matches!(gate_at(&a, &classify_command("rm -rf /", &no_extra()), false, false, &wipe, Some("s"), &grants, &deny, 0), GateOutcome::Deny { .. }));
+    // Revoking every grant of the session ends it.
+    grants.revoke("s", "all");
+    assert!(!grants.is_full("s"));
+    assert!(matches!(gate_at(&a, &destructive, true, false, &[], Some("s"), &grants, &deny, 0), GateOutcome::Ask { .. }));
+}
+
+#[test]
 fn gate_treats_task_sudo_as_pre_authorized_unless_policy_denies_it() {
     let config = Config::resolve(json!({ "inventoryFile": null, "hosts": [{ "name": "a" }, { "name": "b", "policy": { "sudo": "deny" } }] })).unwrap();
     let inventory = Inventory::load(&config, &[], Some(&ManagedState::default())).unwrap();

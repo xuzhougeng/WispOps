@@ -474,6 +474,7 @@ impl Workspace {
                 if let Gate::Ask(_, ask) = &call.gate { self.fleet.grant(&self.chat.session, ask) }
             }
         }
+        if consent == Consent::Full { self.fleet.grant_full(&self.chat.session) }
         self.execute_tools(pending.calls, pending.first, consent != Consent::Deny, cx);
     }
 
@@ -634,6 +635,7 @@ impl Workspace {
         let model = profile.map(|profile| profile.title()).unwrap_or_default();
         let listing = chat.history.is_some();
         let grants = self.fleet.grants(&chat.session);
+        let full = self.fleet.grant_store().is_full(&chat.session);
         let scope = if listing {
             t("点开一次对话可以接着说").to_string()
         } else if self.view.hosts.is_empty() {
@@ -670,7 +672,7 @@ impl Workspace {
                     .child(ui::ghost_button("chat-hide", Some("panel-left"), None).tooltip(ui::tip(t("收起助手"))).on_click(self.on(Cmd::ToggleChat, cx))),
             )
             // The grants of this conversation: what the assistant may do without asking, until when, and a way to take it back.
-            .when(!grants.is_empty() && !listing, |d| {
+            .when((full || !grants.is_empty()) && !listing, |d| {
                 d.child(
                     div()
                         .flex()
@@ -683,8 +685,8 @@ impl Workspace {
                         .border_color(Theme::line())
                         .bg(Theme::bg_sunken())
                         .text_size(text_px(12.))
-                        .child(ui::icon("info", 13., Theme::warning()))
-                        .child(div().flex_1().min_w_0().truncate().text_color(Theme::text_secondary()).child(tf!("限时授权：{}", "Grants: {}", grants.join("；"))))
+                        .child(ui::icon("info", 13., if full { Theme::danger() } else { Theme::warning() }))
+                        .child(div().flex_1().min_w_0().truncate().text_color(Theme::text_secondary()).child(if full { t("完全授权：这次对话里助手的操作不再询问").to_string() } else { tf!("限时授权：{}", "Grants: {}", grants.join("；")) }))
                         .child(ui::secondary_button("grants-revoke", t("撤销")).h(text_px(24.)).on_click(self.on(Cmd::RevokeGrants, cx))),
                 )
             })
@@ -824,6 +826,7 @@ impl Workspace {
                     .gap(px(8.))
                     .child(button("consent-once", t("允许这一次"), Consent::Once, self, cx))
                     .when(grantable, |d| d.child(button("consent-grant", if crate::i18n::is_english() { "Allow for a while" } else { "限时允许同类操作" }, Consent::Grant, self, cx).tooltip(ui::tip(tf!("允许这一次，并在接下来 {minutes} 分钟内，对这些服务器上同样级别的操作不再询问（仅这次对话）。", "Allow this once, and for the next {minutes} minutes do not ask again about operations of the same level on these servers (this conversation only).")))))
+                    .child(ui::secondary_button("consent-full", t("完全授权")).h(text_px(28.)).on_click(self.on(Cmd::AskFullPermission, cx)).tooltip(ui::tip(t("允许这一次，并且这次对话里不再询问任何操作，包括破坏性操作；会先提醒你确认。"))))
                     .child(button("consent-deny", t("不允许"), Consent::Deny, self, cx)),
             )
             .into_any_element()

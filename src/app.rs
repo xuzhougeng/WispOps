@@ -72,6 +72,8 @@ pub enum Consent {
     Once,
     /// This call, and the same capabilities on the same hosts for a while (a grant).
     Grant,
+    /// This call, and nothing asked about again in this conversation (full permission).
+    Full,
     Deny,
 }
 
@@ -89,6 +91,8 @@ pub enum Cmd {
     Draft(String),
     PickSlash(usize),
     AnswerTools(Consent),
+    /// Warn about full permission before giving it.
+    AskFullPermission,
     ToggleTools(usize),
     /// Show what a tool returned, in full.
     ShowOutput(usize),
@@ -447,6 +451,13 @@ impl Workspace {
             }
             Cmd::PickSlash(at) => self.pick_slash(at, cx),
             Cmd::AnswerTools(consent) => self.answer_tools(consent, cx),
+            Cmd::AskFullPermission => self.confirm(
+                t("完全授权这次对话？"),
+                t("之后这次对话里，助手对清单中所有服务器的变更、sudo 和破坏性操作（包括删除文件、停服务、重启）都不再询问，直接执行。只有权限设为「拒绝」的操作和禁止清单里的命令仍会被拒绝。授权到撤销或开始新对话为止；每条命令仍记入操作审计。"),
+                t("完全授权"),
+                Cmd::AnswerTools(Consent::Full),
+                cx,
+            ),
             Cmd::ToggleTools(first) => {
                 if !self.chat.tools_open.remove(&first) { self.chat.tools_open.insert(first); }
             }
@@ -816,7 +827,7 @@ impl Workspace {
                 Ok(keystroke) => window.defer(cx, move |window, cx| _ = window.dispatch_keystroke(keystroke, cx)),
                 Err(_) => eprintln!("dev: not a key {arg}"),
             },
-            "consent" => self.run(Cmd::AnswerTools(match arg { "deny" => Consent::Deny, "grant" => Consent::Grant, _ => Consent::Once }), window, cx),
+            "consent" => self.run(Cmd::AnswerTools(match arg { "deny" => Consent::Deny, "grant" => Consent::Grant, "full" => Consent::Full, _ => Consent::Once }), window, cx),
             "inspect" => self.run(Cmd::InspectHosts(arg.to_string()), window, cx),
             "add-host" => self.run(Cmd::AddHost, window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),

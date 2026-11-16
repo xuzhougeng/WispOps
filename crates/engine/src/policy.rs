@@ -3,7 +3,9 @@
 //! Three sources can authorize a capability on a host: deployment policy (`allow`), a time-boxed
 //! grant the human issued, or a one-shot approval of the exact call. `deny` in policy is
 //! absolute: neither grants nor approvals override it. Grants are created only by the human;
-//! nothing the model can call creates or widens one.
+//! nothing the model can call creates or widens one. A human may also give one conversation full
+//! permission: every `ask` on every host becomes `allow` until it is revoked or the conversation
+//! ends; `deny` and the deny list still hold.
 
 use std::sync::Mutex;
 
@@ -49,7 +51,12 @@ pub struct NewGrant {
 #[derive(Debug, Default)]
 pub struct GrantStore {
     grants: Mutex<Vec<Grant>>,
+    /// Sessions given full permission.
+    full: Mutex<Vec<String>>,
 }
+
+/// The grant id recorded on a ruling lifted by full permission.
+pub const FULL_GRANT: &str = "full";
 
 impl GrantStore {
     pub fn new() -> Self {
@@ -58,6 +65,20 @@ impl GrantStore {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Grant>> {
         self.grants.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn full_sessions(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+        self.full.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Give one session full permission: no capability on any host is asked about any more.
+    pub fn add_full(&self, session: &str) {
+        let mut full = self.full_sessions();
+        if !full.iter().any(|s| s == session) { full.push(session.to_string()) }
+    }
+
+    pub fn is_full(&self, session: &str) -> bool {
+        self.full_sessions().iter().any(|s| s == session)
     }
 
     pub fn add(&self, grant: NewGrant) -> Grant {
@@ -91,12 +112,13 @@ impl GrantStore {
         self.active_at(session, now).into_iter().find(|grant| grant.capability == capability && grant.hosts.iter().any(|h| h == host))
     }
 
-    /// Revoke one grant by id, or every grant of the session with `all`.
+    /// Revoke one grant by id, or every grant of the session (and its full permission) with `all`.
     pub fn revoke(&self, session: &str, id: &str) -> Vec<Grant> {
         self.revoke_at(session, id, now_ms())
     }
 
     pub fn revoke_at(&self, session: &str, id: &str, now: i64) -> Vec<Grant> {
+        if id == "all" || id == FULL_GRANT { self.full_sessions().retain(|s| s != session) }
         let revoked: Vec<Grant> = self.active_at(session, now).into_iter().filter(|grant| id == "all" || grant.id == id).collect();
         self.lock().retain(|grant| !revoked.iter().any(|gone| gone.id == grant.id));
         revoked
@@ -104,6 +126,7 @@ impl GrantStore {
 
     pub fn clear(&self) {
         self.lock().clear();
+        self.full_sessions().clear();
     }
 }
 
@@ -142,9 +165,14 @@ pub fn decide(hosts: &[Host], capabilities: &[Capability], session: Option<&str>
 
 pub fn decide_at(hosts: &[Host], capabilities: &[Capability], session: Option<&str>, grants: &GrantStore, now: i64) -> Decision {
     let mut rulings = Vec::new();
+    let full = session.is_some_and(|session| grants.is_full(session));
     for host in hosts {
         for capability in capabilities {
             let permission = host.policy.get(*capability);
+            if permission == Permission::Ask && full {
+                rulings.push(CapabilityRuling { host: host.name.clone(), capability: *capability, permission: Permission::Allow, grant: Some(FULL_GRANT.to_string()) });
+                continue;
+            }
             if permission == Permission::Ask
                 && let Some(session) = session
                 && let Some(grant) = grants.find_at(session, &host.name, *capability, now)
@@ -304,6 +332,8 @@ pub fn gate_at(
                 Authorization::Task
             } else if capabilities.is_empty() {
                 Authorization::ReadOnly
+            } else if rulings.iter().any(|ruling| ruling.grant.as_deref() == Some(FULL_GRANT)) {
+                Authorization::Full
             } else if rulings.iter().any(|ruling| ruling.grant.is_some()) {
                 Authorization::Grant
             } else {

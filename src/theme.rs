@@ -178,7 +178,7 @@ pub fn status_colors(value: &str) -> (Hsla, Hsla) {
         "ok" | "allow" | "read" | "verified" => (0x23764A, 0xE4F4EA, 0x63C48F),
         "info" | "grant" | "policy" => (0x2A5FC4, 0xE8F0FE, 0x7CA8F5),
         "warn" | "ask" | "change" | "sudo" => (0x9A6410, 0xFBF1DC, 0xE0B25A),
-        "crit" | "deny" | "destructive" | "failed" => (0xB23B30, 0xFDECEA, 0xEE877C),
+        "crit" | "deny" | "destructive" | "failed" | "full" => (0xB23B30, 0xFDECEA, 0xEE877C),
         _ => (0x5C636E, 0xEFEFEC, 0xABAFB7),
     };
     if dark() { (c(bright), c(bright).opacity(0.16)) } else { (c(light), c(fill)) }

@@ -271,7 +271,7 @@ pub fn run(fleet: &Fleet, session: &str, name: &str, args: &Value, ticket: Ticke
             if !failed.is_empty() { lines.push(format!("\nProbe failed: {}", failed.join("; "))) }
             let grants = fleet.grant_store().active(session);
             lines.push(String::new());
-            lines.push(if grants.is_empty() { "No grants in this conversation. Actions needing an \"ask\" capability show the user an approval card once per call.".into() } else { format!("Grants in this conversation: {}", grants.iter().map(|grant| format!("{} on {} until {}", grant.capability, grant.hosts.join(","), time::to_iso(grant.expires_at))).collect::<Vec<_>>().join("; ")) });
+            lines.push(if fleet.grant_store().is_full(session) { "The user gave this conversation full permission: actions needing an \"ask\" capability (change, sudo, destructive) run without asking; \"deny\" and the deny list still refuse. Still prefer read-only diagnosis, explain each change in reason, and be careful with destructive commands.".into() } else if grants.is_empty() { "No grants in this conversation. Actions needing an \"ask\" capability show the user an approval card once per call.".into() } else { format!("Grants in this conversation: {}", grants.iter().map(|grant| format!("{} on {} until {}", grant.capability, grant.hosts.join(","), time::to_iso(grant.expires_at))).collect::<Vec<_>>().join("; ")) });
             Ok(lines.join("\n"))
         }
         "ops_exec" => {
@@ -488,6 +488,7 @@ pub fn authorization_label(authorization: &str) -> &'static str {
     match authorization {
         "policy" => "策略允许",
         "grant" => "限时授权",
+        "full" => "完全授权",
         "approval" => "逐次批准",
         "task" => "任务",
         _ => "只读",
