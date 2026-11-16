@@ -170,7 +170,11 @@ pub struct TaskDraft {
     /// `manual`, `daily`, `every` or `cron`.
     pub schedule: String,
     pub daily: String,
+    /// With `daily`: the ISO weekdays it runs on, Monday 1 … Sunday 7; none is every day.
+    pub weekdays: Vec<u32>,
     pub every_minutes: u32,
+    /// Not in the form; kept as it was: the schedule's own time zone.
+    pub time_zone: Option<String>,
     /// Five-field cron expression, evaluated in the configured zone.
     pub cron: String,
     pub sudo: bool,
@@ -975,15 +979,19 @@ impl Fleet {
     pub fn save_task(&self, editing: Option<&str>, draft: TaskDraft) -> Result<(), String> {
         let some = |text: String| Some(text).filter(|text| !text.is_empty());
         let playbook: Playbook = serde_json::from_value(Value::String(draft.playbook.clone())).map_err(|_| "不认识这种检查内容。".to_string())?;
+        // The days in order and once each, whatever order they were ticked in.
+        let weekdays: Vec<u32> = draft.weekdays.iter().copied().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         let schedule = match draft.schedule.as_str() {
-            "daily" => Some(TaskSchedule { daily: Some(draft.daily.clone()), ..Default::default() }),
+            "daily" => Some(TaskSchedule { daily: Some(draft.daily.clone()), weekdays, ..Default::default() }),
             "every" => Some(TaskSchedule { every_minutes: Some(u64::from(draft.every_minutes)), ..Default::default() }),
             "cron" => {
                 wisp_ops_engine::cron::parse(&draft.cron).map_err(|why| tf!("cron 表达式不能用：{}", "The cron expression cannot be used: {}", crate::cron::error(&why)))?;
                 Some(TaskSchedule { cron: Some(draft.cron.split_whitespace().collect::<Vec<_>>().join(" ")), ..Default::default() })
             }
             _ => None,
-        };
+        }
+        // A zone written by hand (or by a template) stays with the schedule: the form does not show it.
+        .map(|schedule| TaskSchedule { time_zone: draft.time_zone.clone(), ..schedule });
         if playbook == Playbook::Custom && draft.commands.is_empty() { return Err("自定义任务至少写一条只读命令。".into()) }
         if matches!(playbook, Playbook::Disk | Playbook::Space | Playbook::NewFiles) && draft.paths.is_empty() { return Err("这种检查需要填写路径。".into()) }
         // A check script must be one a person accepted into the library, and still pass the checks.
@@ -1241,7 +1249,9 @@ fn draft_of(task: &TaskSpec) -> TaskDraft {
         commands: task.commands.clone(),
         schedule: match schedule { Some(schedule) if schedule.daily.is_some() => "daily", Some(schedule) if schedule.every_minutes.is_some() => "every", Some(schedule) if schedule.cron.is_some() => "cron", _ => "manual" }.into(),
         daily: schedule.and_then(|schedule| schedule.daily.clone()).unwrap_or_else(|| "08:30".into()),
+        weekdays: schedule.map(|schedule| schedule.weekdays.clone()).unwrap_or_default(),
         every_minutes: schedule.and_then(|schedule| schedule.every_minutes).unwrap_or(60) as u32,
+        time_zone: schedule.and_then(|schedule| schedule.time_zone.clone()),
         cron: schedule.and_then(|schedule| schedule.cron.clone()).unwrap_or_else(|| DEFAULT_CRON.into()),
         sudo: task.sudo == Some(true),
         script: task.script.clone().unwrap_or_default(),
@@ -1257,7 +1267,12 @@ fn describe_when(schedule: Option<&TaskSchedule>) -> String {
         None => crate::i18n::t("仅手动").to_string(),
         Some(schedule) => match (&schedule.daily, &schedule.cron, schedule.every_minutes) {
             (Some(daily), ..) if schedule.weekdays.is_empty() => tf!("每天 {daily}", "Daily at {daily}"),
-            (Some(daily), ..) => tf!("每周 {} 的 {daily}", "Weekdays {} at {daily}", schedule.weekdays.iter().map(u32::to_string).collect::<Vec<_>>().join(",")),
+            (Some(daily), ..) => {
+                // The days by name, as the form's own boxes name them.
+                let days: Vec<&str> = schedule.weekdays.iter().filter_map(|day| ["一", "二", "三", "四", "五", "六", "日"].get((*day as usize).wrapping_sub(1))).map(|name| crate::cron::weekday_short(name)).collect();
+                let days = days.join(if crate::i18n::is_english() { ", " } else { "、" });
+                tf!("每周{days} {daily}", "{days} at {daily}")
+            }
             (_, Some(cron), _) => match wisp_ops_engine::cron::parse(cron) {
                 Ok(parsed) => format!("{} · cron {cron}", crate::cron::describe(&parsed)),
                 Err(why) => tf!("cron {cron}（不能用：{}）", "cron {cron} (cannot be used: {})", crate::cron::error(&why)),
@@ -1325,6 +1340,22 @@ mod tests {
         std::fs::remove_dir(root.join("managed.json.lock")).unwrap();
         assert!(names(&fleet).is_empty());
         assert_eq!(fleet.inventory().host("cpu").and_then(|host| host.login_secret.clone()), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_weekly_task_keeps_its_weekdays_and_its_zone_through_the_form() {
+        let (fleet, root) = fleet("weekly");
+        // Ticked out of order, one of them twice.
+        let draft = super::TaskDraft { name: "weekly".into(), targets: "all".into(), playbook: "inspect".into(), schedule: "daily".into(), daily: "08:30".into(), weekdays: vec![5, 1, 5], time_zone: Some("Europe/Berlin".into()), ..Default::default() };
+        fleet.save_task(None, draft).unwrap();
+        let saved = fleet.inventory().task("weekly").and_then(|task| task.schedule.clone()).unwrap();
+        assert_eq!((saved.daily.as_deref(), saved.weekdays.clone(), saved.time_zone.as_deref()), (Some("08:30"), vec![1, 5], Some("Europe/Berlin")));
+        // Opened in the form and saved again untouched: nothing is lost.
+        let reopened = fleet.view().tasks.iter().find(|task| task.name == "weekly").unwrap().draft.clone();
+        assert_eq!((reopened.schedule.as_str(), reopened.weekdays.clone(), reopened.time_zone.as_deref()), ("daily", vec![1, 5], Some("Europe/Berlin")));
+        fleet.save_task(Some("weekly"), reopened).unwrap();
+        assert_eq!(fleet.inventory().task("weekly").and_then(|task| task.schedule.clone()), Some(saved));
         let _ = std::fs::remove_dir_all(root);
     }
 

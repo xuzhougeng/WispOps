@@ -179,6 +179,8 @@ pub enum Cmd {
     PickPlaybook(&'static str),
     PickSchedule(&'static str),
     ToggleTaskSudo,
+    /// A day of the week of a daily schedule, ISO: Monday 1 … Sunday 7.
+    ToggleTaskWeekday(u32),
     /// The check-script library and its drafts (`scripts.rs`).
     Scripts(crate::scripts::ScriptCmd),
     // ---- task templates
@@ -659,7 +661,7 @@ impl Workspace {
                 self.open_host = if self.open_host.as_ref() == Some(&host) { None } else { Some(host) };
             }
             cmd @ (Cmd::AddCredential | Cmd::EditCredential(_) | Cmd::DeleteCredential(_) | Cmd::ToggleAgentUse) => self.run_vault(cmd, window, cx),
-            cmd @ (Cmd::AddTask | Cmd::EditTask(_) | Cmd::DeleteTask(_) | Cmd::RunTask(_) | Cmd::ToggleTask(_) | Cmd::PickPlaybook(_) | Cmd::PickSchedule(_) | Cmd::ToggleTaskSudo) => self.run_tasks(cmd, window, cx),
+            cmd @ (Cmd::AddTask | Cmd::EditTask(_) | Cmd::DeleteTask(_) | Cmd::RunTask(_) | Cmd::ToggleTask(_) | Cmd::PickPlaybook(_) | Cmd::PickSchedule(_) | Cmd::ToggleTaskSudo | Cmd::ToggleTaskWeekday(_)) => self.run_tasks(cmd, window, cx),
             Cmd::Scripts(cmd) => self.run_scripts(cmd, window, cx),
             cmd @ (Cmd::OpenTemplates | Cmd::UseTemplate(_) | Cmd::SaveAsTemplate(_) | Cmd::ReviewDraft(_) | Cmd::DiscardDraft(_) | Cmd::AskDeleteTemplate(_) | Cmd::DeleteTemplate(_)) => self.run_templates(cmd, window, cx),
             Cmd::AuditHost(host) => {
@@ -1069,6 +1071,7 @@ impl Workspace {
             "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
             "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
+            "weekday" => self.run(Cmd::ToggleTaskWeekday(arg.parse().unwrap_or(1)), window, cx),
             "schedule" => self.run(Cmd::PickSchedule(match arg { "cron" => "cron", "every" => "every", "manual" => "manual", _ => "daily" }), window, cx),
             "cron" => {
                 if let Some(Modal::Task(form)) = self.modal.as_ref() { form.cron.clone().update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)) }

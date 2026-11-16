@@ -148,9 +148,8 @@ pub fn script_draft_store(data_dir: &Path) -> LocalState<ScriptDrafts> {
 /// Keep a proposal for review: the newest draft per script id, at most [`MAX_DRAFTS`].
 pub fn add_script_draft(data_dir: &Path, script: &Value) -> Result<ScriptDraft, String> {
     let draft = ScriptDraft { id: random_hex::<16>()?, created_at: to_iso(now_ms()), script: validate_script(script)? };
-    let store = script_draft_store(data_dir);
-    let current = store.read()?;
-    store.change(&current.revision, |state| {
+    // No person is behind this write to refresh and retry: it waits for its turn.
+    script_draft_store(data_dir).update(|state| {
         let mut entries: Vec<ScriptDraft> = state.entries.into_iter().filter(|kept| kept.script.id != draft.script.id).collect();
         entries.push(draft.clone());
         let skip = entries.len().saturating_sub(MAX_DRAFTS);

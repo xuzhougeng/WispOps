@@ -80,8 +80,12 @@ pub struct TaskForm {
     /// `manual`, `daily`, `every` or `cron`.
     pub schedule: &'static str,
     pub daily: Entity<TextInput>,
+    /// With `daily`: the ISO weekdays ticked, Monday 1 … Sunday 7; none is every day.
+    pub weekdays: Vec<u32>,
     pub every: Entity<TextInput>,
     pub cron: Entity<TextInput>,
+    /// The schedule's own time zone, kept as it was: the form does not show it.
+    pub zone: Option<String>,
     pub sudo: bool,
     /// The check script of the `script` playbook.
     pub script: String,
@@ -115,7 +119,7 @@ impl Modal {
         match self {
             Modal::Host(HostForm { editing: _, name, address, user, port, groups, jump, identity, description }) => vec![name, groups, address, user, port, jump, identity, description],
             Modal::Credential(form) | Modal::Bind(BindForm { new: Some(form), .. }) => form.inputs(),
-            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, cron, sudo: _, script: _, origin }) => [vec![name, description, targets], origin.inputs(), vec![paths, commands, instruction, daily, every, cron]].concat(),
+            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, weekdays: _, every, cron, zone: _, sudo: _, script: _, origin }) => [vec![name, description, targets], origin.inputs(), vec![paths, commands, instruction, daily, every, cron]].concat(),
             Modal::Template(form) => form.inputs(),
             Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _, new: None }) | Modal::Import(ImportForm { rows: _ }) => vec![],
             Modal::Confirm { .. } | Modal::Text { .. } | Modal::Templates => vec![],
@@ -128,8 +132,9 @@ impl Workspace {
     /// A text field of a dialog: Enter in a one-line field submits, Escape closes.
     pub fn modal_input(&mut self, placeholder: &'static str, text: &str, multiline: bool, cx: &mut Context<Self>) -> Entity<TextInput> {
         let input = cx.new(|cx| {
-            let input = TextInput::new(placeholder, cx).with_text(text);
-            if multiline { input.multiline(3) } else { input }
+            // Many lines first: a one-line field joins the lines it is given, and two commands would open as one.
+            let input = TextInput::new(placeholder, cx);
+            if multiline { input.multiline(3).with_text(text) } else { input.with_text(text) }
         });
         self.modal_subscriptions.push(cx.subscribe(&input, move |this: &mut Self, _, event: &InputEvent, cx| match event {
             InputEvent::Submit if !multiline => this.submit_pending(cx),
