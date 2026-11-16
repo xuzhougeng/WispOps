@@ -6,6 +6,8 @@ use std::time::Duration;
 use wisp_ops_core::ai::{self, ChatEvent, HttpRequest, Protocol, TurnReader};
 
 pub mod fetch;
+/// Webhook posts for the outgoing notifications.
+pub mod webhook;
 
 const USER_AGENT: &str = concat!("WispOps/", env!("CARGO_PKG_VERSION"));
 

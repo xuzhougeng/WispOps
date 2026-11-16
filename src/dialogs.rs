@@ -94,6 +94,7 @@ pub enum Modal {
     Bind(BindForm),
     Import(ImportForm),
     Task(TaskForm),
+    Webhook(crate::webhooks::WebhookForm),
 }
 
 impl Modal {
@@ -107,6 +108,7 @@ impl Modal {
             Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, sudo: _ }) => vec![name, description, targets, paths, commands, instruction, daily, every],
             Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _, new: None }) | Modal::Import(ImportForm { rows: _ }) => vec![],
             Modal::Confirm { .. } | Modal::Text { .. } => vec![],
+            Modal::Webhook(form) => form.inputs(),
         }
     }
 }
@@ -176,6 +178,7 @@ impl Workspace {
             Modal::Host(_) | Modal::Policy(_) | Modal::Bind(_) | Modal::Import(_) => self.submit_servers(window, cx),
             Modal::Credential(_) => self.submit_vault(window, cx),
             Modal::Task(_) => self.submit_task(window, cx),
+            Modal::Webhook(_) => self.submit_webhook(cx),
         };
         match done {
             Ok(()) => self.close_modal(window, cx),
@@ -371,6 +374,7 @@ impl Workspace {
                 false,
             ),
             Modal::Task(form) => self.task_form_body(form, window, cx),
+            Modal::Webhook(form) => self.webhook_form_body(form, window, cx),
         };
         let reading = label.is_none();
         // An import with nothing ticked has nothing to do: the button says so before it is pressed.

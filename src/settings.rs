@@ -317,6 +317,7 @@ impl Workspace {
                 Self::section(t("自动巡检"), t("窗口开着时，每台服务器距上次巡检超过这个间隔就以只读方式、不使用 sudo 巡检一次并写入历史；机群总览据此显示状态和趋势。不调用模型。"))
                     .child(row(t("间隔"), ui::secondary_button("auto-inspect", interval_label(settings.auto_inspect_minutes)).child(ui::icon("chevron-down", 12., Theme::text_tertiary())).on_click(self.on_menu(MenuKind::AutoInspect, cx)).into_any_element())),
             )
+            .child(self.render_webhooks(cx))
             .child(Self::section(t("网络"), t("模型请求走的代理。SSH 连接不受它影响，仍按 ~/.ssh/config。")).child(row(t("全局代理"), div().w(px(420.)).child(ui::field(&self.settings_view.proxy, window, cx)).into_any_element())))
             .child(
                 Self::section(t("数据"), t("清单、密码库、操作审计、巡检历史和对话都在这个文件夹里。清单文件 inventory.yml 可以手写，保存后下一次操作即生效。"))

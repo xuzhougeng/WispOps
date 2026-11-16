@@ -19,6 +19,7 @@ mod findings;
 mod input;
 mod longrun;
 mod markdown;
+mod notify;
 mod ops;
 mod overview;
 mod scans;
@@ -32,6 +33,7 @@ mod ui;
 mod updates;
 mod updates_view;
 mod vault;
+mod webhooks;
 
 use gpui::*;
 

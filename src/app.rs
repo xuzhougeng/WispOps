@@ -210,6 +210,17 @@ pub enum Cmd {
     DismissUpdate,
     /// From the notice: 设置 › 通用, where the update is.
     ShowUpdate,
+    // ---- settings: outgoing webhooks (`webhooks.rs`)
+    AddWebhook,
+    EditWebhook(usize),
+    RemoveWebhook(usize),
+    /// Remove, once confirmed.
+    DropWebhook(usize),
+    /// Send a test: a saved webhook, or the dialog's fields (`None`).
+    TestWebhook(Option<usize>),
+    PickWebhookKind(&'static str),
+    ToggleWebhookEvent(&'static str),
+    SetWebhookTasks(&'static str),
     // ---- dialogs and menus
     SubmitModal,
     CloseModal,
@@ -316,6 +327,7 @@ impl Workspace {
         wisp_ops_net::set_proxy(&settings.proxy);
         let root = settings.data_root(&default_root());
         let fleet = Arc::new(Fleet::open(&root));
+        crate::notify::configure(&settings, Some(fleet.data_dir()));
         let focus = cx.focus_handle();
         window.focus(&focus);
         theme::set_accent("teal");
@@ -639,6 +651,7 @@ impl Workspace {
                 self.reload_audit(cx);
             }
             cmd @ (Cmd::CheckUpdate | Cmd::ToggleUpdateCheck | Cmd::DownloadUpdate | Cmd::RevealUpdate(_) | Cmd::DismissUpdate | Cmd::ShowUpdate) => self.run_updates(cmd, cx),
+            cmd @ (Cmd::AddWebhook | Cmd::EditWebhook(_) | Cmd::RemoveWebhook(_) | Cmd::DropWebhook(_) | Cmd::TestWebhook(_) | Cmd::PickWebhookKind(_) | Cmd::ToggleWebhookEvent(_) | Cmd::SetWebhookTasks(_)) => self.run_webhooks(cmd, cx),
             cmd => self.run_settings(cmd, window, cx),
         }
         cx.notify();
@@ -1036,6 +1049,10 @@ impl Workspace {
             "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
+            // The webhook dialog: `add-webhook`, `edit-webhook:0`; `test-webhook` tests the dialog's fields, `test-webhook:0` a saved one.
+            "add-webhook" => self.run(Cmd::AddWebhook, window, cx),
+            "edit-webhook" => self.run(Cmd::EditWebhook(arg.parse().unwrap_or(0)), window, cx),
+            "test-webhook" => self.run(Cmd::TestWebhook(arg.parse().ok()), window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),
             // The credential dialog of a server: `bind:web-01` for its login, `bind-sudo:web-01`; `bind-new` writes a new one.
             "bind" | "bind-sudo" => self.run(Cmd::BindCredential(arg.to_string(), name == "bind-sudo"), window, cx),
