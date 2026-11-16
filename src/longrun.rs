@@ -226,12 +226,14 @@ impl Workspace {
                 .child(div().w(px(280.)).child(ui::field(input, window, cx)))
                 .when(!filter.is_empty(), |d| d.child(ui::icon_action(SharedString::from(format!("long-clear-{host}")), "x", Theme::text_tertiary(), t("清除筛选")).on_click(self.on(Cmd::LongFilter(host.to_string(), String::new()), cx))))
         });
-        let columns = div().flex().items_center().gap(px(10.)).h(text_px(24.)).px(px(10.)).text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(cell(110.).child(t("用户"))).child(cell(110.).child(t("已运行"))).child(cell(64.).text_right().child("CPU")).child(cell(64.).text_right().child(t("内存"))).child(cell(84.).child("PID")).child(div().flex_1().child(t("命令")));
+        let columns = div().flex().items_center().gap(px(10.)).h(text_px(24.)).px(px(10.)).text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(cell(92.).child(t("用户"))).child(cell(104.).child(t("已运行"))).child(cell(64.).text_right().child("CPU")).child(cell(64.).text_right().child(t("内存"))).child(cell(76.).child("PID")).child(div().flex_1().child(t("命令")));
+        let groups = group_jobs(&jobs);
         card.pb(px(6.))
             .children(search)
             .when(jobs.is_empty(), |d| d.child(div().px(px(10.)).py(px(6.)).text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(t("没有任务符合筛选"))))
             .when(!jobs.is_empty(), |d| d.child(columns))
-            .children(jobs.iter().take(40).enumerate().map(|(at, job)| {
+            .children(groups.iter().take(40).enumerate().map(|(at, group)| {
+                let job = group.first;
                 let scheduler = job.kind == LongKind::Slurm;
                 let mark = match (scheduler, job.state.as_str(), job.idle()) {
                     (true, ..) => Some(("info", "Slurm".to_string())),
@@ -250,27 +252,72 @@ impl Workspace {
                     .rounded(px(6.))
                     .text_size(text_px(12.))
                     .hover(|s| s.bg(Theme::hover()))
-                    .tooltip(ui::tip(job.command.clone()))
+                    .tooltip(ui::tip(if group.count > 1 { format!("{}\nPID {}", job.command, group.ids.join(", ")) } else { job.command.clone() }))
                     .child({
                         let on = picked.contains(&job.user.as_str());
-                        cell(110.).id(SharedString::from(format!("long-user-{host}-{at}"))).truncate().font_weight(FontWeight::MEDIUM).cursor_pointer().when(on, |d| d.text_color(Theme::accent())).hover(|s| s.text_color(Theme::accent())).tooltip(ui::tip(if on { t("取消按此用户筛选") } else { t("只看此用户的任务") })).on_click(self.on(Cmd::LongUser(host.to_string(), job.user.clone()), cx)).child(job.user.clone())
+                        cell(92.).id(SharedString::from(format!("long-user-{host}-{at}"))).truncate().font_weight(FontWeight::MEDIUM).cursor_pointer().when(on, |d| d.text_color(Theme::accent())).hover(|s| s.text_color(Theme::accent())).tooltip(ui::tip(if on { t("取消按此用户筛选") } else { t("只看此用户的任务") })).on_click(self.on(Cmd::LongUser(host.to_string(), job.user.clone()), cx)).child(job.user.clone())
                     })
-                    .child(cell(110.).child(elapsed_words(job.elapsed_sec)))
-                    .child(cell(64.).text_right().text_color(Theme::text_secondary()).child(if scheduler { "—".to_string() } else { format!("{:.0}%", job.cpu_pct) }))
-                    .child(cell(64.).text_right().text_color(Theme::text_secondary()).child(if scheduler { "—".to_string() } else { format_kb(job.rss_kb) }))
-                    .child(cell(84.).truncate().font_family(theme::MONO_FONT).text_color(Theme::text_tertiary()).child(job.id.clone()))
+                    .child(cell(104.).child(elapsed_words(group.elapsed_sec)))
+                    .child(cell(64.).text_right().text_color(Theme::text_secondary()).child(if scheduler { "—".to_string() } else { format!("{:.0}%", group.cpu_pct) }))
+                    .child(cell(64.).text_right().text_color(Theme::text_secondary()).child(if scheduler { "—".to_string() } else { format_kb(group.rss_kb) }))
+                    .child(if group.count > 1 { cell(76.).truncate().text_color(Theme::text_secondary()).child(tf!("{} 个进程", "{} processes", group.count)) } else { cell(76.).truncate().font_family(theme::MONO_FONT).text_color(Theme::text_tertiary()).child(job.id.clone()) })
                     .child(div().flex_1().min_w_0().truncate().font_family(theme::MONO_FONT).text_color(Theme::text_secondary()).child(job.command.clone()))
-                    .when(job.children > 0, |d| d.child(div().flex_none().text_color(Theme::text_placeholder()).child(tf!("+{} 子进程", "+{} children", job.children))))
+                    .when(group.children > 0, |d| d.child(div().flex_none().text_color(Theme::text_placeholder()).child(tf!("+{} 子进程", "+{} children", group.children))))
                     .children(mark.map(|(state, label)| ui::status_chip(state, &label)))
             }))
-            .when(jobs.len() > 40, |d| d.child(div().px(px(10.)).py(px(4.)).text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("还有 {} 个，可让助手列出", "{} more; the assistant can list them", jobs.len() - 40))))
+            .when(groups.len() > 40, |d| d.child(div().px(px(10.)).py(px(4.)).text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("还有 {} 行，用上面的筛选缩小范围，或让助手列出", "{} more rows: narrow them with the filter above, or have the assistant list them", groups.len() - 40))))
             .into_any_element()
     }
 }
 
+/// The same command of the same user in the same condition, as one row: six `vim x.sh` left
+/// open are one thing to deal with.
+pub struct JobGroup<'a> {
+    pub first: &'a LongJob,
+    pub count: usize,
+    /// The PIDs (or scheduler ids) in it.
+    pub ids: Vec<&'a str>,
+    /// The longest of them.
+    pub elapsed_sec: f64,
+    /// CPU, memory and folded children added up.
+    pub cpu_pct: f64,
+    pub rss_kb: f64,
+    pub children: u32,
+}
+
+/// Fold the jobs that differ only in their PID, keeping the order they came in.
+pub fn group_jobs<'a>(jobs: &[&'a LongJob]) -> Vec<JobGroup<'a>> {
+    let mut groups: Vec<JobGroup<'a>> = vec![];
+    for job in jobs {
+        let alike = |first: &LongJob| first.kind == job.kind && first.user == job.user && first.command == job.command && first.state == job.state && first.idle() == job.idle();
+        match groups.iter_mut().find(|group| alike(group.first)) {
+            Some(group) => {
+                group.count += 1;
+                group.ids.push(&job.id);
+                group.elapsed_sec = group.elapsed_sec.max(job.elapsed_sec);
+                group.cpu_pct += job.cpu_pct;
+                group.rss_kb += job.rss_kb;
+                group.children += job.children;
+            }
+            None => groups.push(JobGroup { first: job, count: 1, ids: vec![&job.id], elapsed_sec: job.elapsed_sec, cpu_pct: job.cpu_pct, rss_kb: job.rss_kb, children: job.children }),
+        }
+    }
+    groups
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{job_matches, toggle_user};
+    use super::{LongJob, LongKind, group_jobs, job_matches, toggle_user};
+
+    #[test]
+    fn jobs_that_differ_only_in_pid_are_one_row() {
+        let job = |id: &str, user: &str, command: &str, hours: f64, cpu: f64| LongJob { kind: LongKind::Process, id: id.into(), user: user.into(), elapsed_sec: hours * 3600., cpu_pct: cpu, mem_pct: 0., rss_kb: 100., state: "sleeping".into(), children: 0, command: command.into() };
+        let jobs = [job("1", "jal", "vim a.sh", 30., 0.), job("2", "gj", "vim a.sh", 29., 0.), job("3", "jal", "vim a.sh", 28., 0.), job("4", "jal", "vim a.sh", 27., 40.)];
+        let groups = group_jobs(&jobs.iter().collect::<Vec<_>>());
+        // The busy one is not folded into the idle ones.
+        assert_eq!(groups.iter().map(|group| (group.first.id.as_str(), group.count)).collect::<Vec<_>>(), [("1", 2), ("2", 1), ("4", 1)]);
+        assert_eq!((groups[0].ids.clone(), groups[0].elapsed_sec, groups[0].rss_kb), (vec!["1", "3"], 30. * 3600., 200.));
+    }
 
     #[test]
     fn a_filter_matches_user_or_command_word_by_word() {

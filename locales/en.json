@@ -404,7 +404,7 @@
  "重启服务、装包、改配置、写文件": "Restart services, install packages, edit configuration, write files",
  "重新排查": "Triage again",
  "重新检查": "Check again",
- "长时任务": "Long-running tasks",
+ "长时任务": "Long tasks",
  "间隔": "Interval",
  "间隔应是大于 0 的分钟数。": "The interval must be a number of minutes above 0.",
  "附加的只读命令（可选，每行一条）": "Extra read-only commands (optional, one per line)",
@@ -419,5 +419,13 @@
  "高对比度": "High contrast",
  "默认": "Default",
  "默认用本机的 SSH 密钥和 ~/.ssh/config 登录；需要密码登录或 sudo 密码时，保存后在服务器详情里关联密码库的凭据。保存后会做一次只读的能力探测。": "Logs in with this computer's SSH keys and ~/.ssh/config by default; for a password login or a sudo password, link a credential of the vault in the server's details after saving. A read-only capability probe runs after saving.",
- "（没有内容）": "(nothing)"
+ "（没有内容）": "(nothing)",
+ "全不选": "Select none",
+ "全选": "Select all",
+ "再巡检一次后画出变化": "One more inspection draws the change",
+ "去填 API Key": "Enter the API key",
+ "探测失败": "Probe failed",
+ "模型服务已经列好，但还没有填 API Key（对应的环境变量也没有设置），助手问不了它。API Key 只保存在本机。不配置模型也可以用左边的页面巡检和管理服务器。": "The model service is listed but has no API key (and its environment variable is not set), so the assistant cannot ask it. The API key stays on this computer. Without a model you can still inspect and manage servers from the pages on the left.",
+ "这次排查不是以 root 运行的：其他用户的进程和连接可能看不到。关联 sudo 凭据后重新排查。": "This triage did not run as root: other users' processes and connections may be hidden. Link a sudo credential and run it again.",
+ "连接到": "Connects to"
 }

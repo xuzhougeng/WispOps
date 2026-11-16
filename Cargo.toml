@@ -13,6 +13,7 @@ members = ["crates/core", "crates/net", "crates/engine", "crates/collect"]
 default-members = [".", "crates/core", "crates/net", "crates/engine", "crates/collect"]
 
 [dependencies]
+regex = "1"
 wisp_ops_core = { path = "crates/core" }
 wisp_ops_net = { path = "crates/net" }
 wisp_ops_engine = { path = "crates/engine" }

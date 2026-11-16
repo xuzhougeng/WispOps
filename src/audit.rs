@@ -13,6 +13,8 @@ use wisp_ops_core::time;
 
 /// The most rows the page shows.
 pub const AUDIT_ROWS: usize = 500;
+/// The command keeps this much of a narrow page; the server, source and authorization columns give way to it.
+const COMMAND_MIN: f32 = 170.;
 
 impl Workspace {
     pub fn reload_audit(&mut self, cx: &mut Context<Self>) {
@@ -31,7 +33,7 @@ impl Workspace {
         let body: AnyElement = if rows.is_empty() {
             ui::empty_state("history", t("这段时间没有记录"), t("助手、这个窗口和例行任务执行的每一条远程命令都会记在这里。")).into_any_element()
         } else {
-            let head = div().flex().flex_none().items_center().gap(px(12.)).h(text_px(30.)).px(px(24.)).border_b_1().border_color(Theme::line()).text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(div().w(px(92.)).flex_none().child(t("时间"))).child(div().w(px(130.)).flex_none().child(t("服务器"))).child(div().w(px(92.)).flex_none().child(t("来源"))).child(div().w(px(110.)).flex_none().child(t("风险"))).child(div().w(px(70.)).flex_none().child(t("授权"))).child(div().w(px(84.)).flex_none().child(t("结果"))).child(div().flex_1().child(t("命令")));
+            let head = div().flex().flex_none().items_center().gap(px(12.)).h(text_px(30.)).px(px(24.)).border_b_1().border_color(Theme::line()).text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(div().w(px(92.)).flex_none().child(t("时间"))).child(div().w(px(130.)).min_w(px(64.)).truncate().child(t("服务器"))).child(div().w(px(92.)).min_w(px(40.)).truncate().child(t("来源"))).child(div().w(px(110.)).flex_none().child(t("风险"))).child(div().w(px(70.)).min_w(px(40.)).truncate().child(t("授权"))).child(div().w(px(84.)).flex_none().child(t("结果"))).child(div().flex_1().min_w(px(COMMAND_MIN)).child(t("命令")));
             let list = div().id("audit-list").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.page_scroll).children(rows.iter().enumerate().map(|(n, row)| {
                 let ok = row.status == "ok";
                 div()
@@ -52,12 +54,12 @@ impl Workspace {
                         move |this, _, _, cx| this.open_modal(crate::dialogs::Modal::Text { title: title.clone(), text: text.clone(), scroll: ScrollHandle::new() }, cx)
                     }))
                     .child(div().w(px(92.)).flex_none().text_color(Theme::text_tertiary()).child(time::short_time(&row.at)))
-                    .child(div().w(px(130.)).flex_none().truncate().child(row.host.clone()))
-                    .child(div().w(px(92.)).flex_none().truncate().text_color(Theme::text_secondary()).child(t(tools::origin_label(&row.tool)).to_string()))
+                    .child(div().w(px(130.)).min_w(px(64.)).truncate().child(row.host.clone()))
+                    .child(div().w(px(92.)).min_w(px(40.)).truncate().text_color(Theme::text_secondary()).child(t(tools::origin_label(&row.tool)).to_string()))
                     .child(div().w(px(110.)).flex_none().flex().gap(px(4.)).child(ui::status_chip(&row.risk, t(tools::risk_label(&row.risk)))).when(row.sudo, |d| d.child(ui::status_chip("sudo", "sudo"))))
-                    .child(div().w(px(70.)).flex_none().truncate().text_color(Theme::text_secondary()).child(t(tools::authorization_label(&row.authorization)).to_string()))
+                    .child(div().w(px(70.)).min_w(px(40.)).truncate().text_color(Theme::text_secondary()).child(t(tools::authorization_label(&row.authorization)).to_string()))
                     .child(div().w(px(84.)).flex_none().truncate().text_color(if ok { Theme::success() } else { Theme::danger() }).child(match row.exit_code { Some(code) if !ok => format!("{} / {code}", t(tools::status_label(&row.status))), _ => t(tools::status_label(&row.status)).to_string() }))
-                    .child(div().flex_1().min_w_0().truncate().font_family(theme::MONO_FONT).text_color(Theme::text_secondary()).child(row.command.lines().next().unwrap_or("").to_string()))
+                    .child(div().flex_1().min_w(px(COMMAND_MIN)).truncate().font_family(theme::MONO_FONT).text_color(Theme::text_secondary()).child(row.command.lines().next().unwrap_or("").to_string()))
             }));
             div().flex().flex_col().flex_1().min_h_0().child(head).child(list).into_any_element()
         };

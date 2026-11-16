@@ -35,8 +35,16 @@ use wisp_ops_engine::{schedule, ssh_config, time};
 #[derive(Clone, Debug, Default)]
 pub struct FindingView {
     pub severity: String,
+    pub code: String,
     pub message: String,
     pub muted: bool,
+}
+
+impl FindingView {
+    /// The finding as the window words it: in its language, long lists folded.
+    pub fn words(&self) -> String {
+        crate::findings::words(&self.code, &self.message)
+    }
 }
 
 /// One inspection of a server, as the overview's square and the detail panel show it.
@@ -97,6 +105,8 @@ pub struct HostView {
     pub name: String,
     /// `user@host:port` as shown.
     pub address: String,
+    /// Where `~/.ssh/config` sends this name (`user@host:port`), when it is an alias there and the inventory says no more itself; else empty.
+    pub target: String,
     pub ssh: String,
     pub user: String,
     pub port: Option<u16>,
@@ -126,7 +136,16 @@ impl HostView {
     }
 
     pub fn source_label(&self) -> &'static str {
-        if self.managed { "在这里添加" } else { "inventory.yml" }
+        match self.managed {
+            true if self.groups.iter().any(|group| group == "ssh-config") => "从 ssh_config 导入",
+            true => "在这里添加",
+            false => "inventory.yml",
+        }
+    }
+
+    /// The address a list shows under the name: where an ssh_config alias leads, when that is known.
+    pub fn shown_address(&self) -> &str {
+        if self.target.is_empty() { &self.address } else { &self.target }
     }
 }
 
@@ -621,12 +640,10 @@ impl Fleet {
 
     // ---- what the window does itself (read-only, no sudo)
 
-    /// Probe the selected servers and say what came of it.
-    pub fn probe(&self, selector: &str) -> Result<String, String> {
+    /// Probe the selected servers and say, for each, what went wrong (`None` when it answered).
+    pub fn probe_each(&self, selector: &str) -> Result<Vec<(String, Option<String>)>, String> {
         let hosts = self.select(selector)?;
-        let results = self.probe_hosts(&hosts, "window:probe", None, None);
-        let failed: Vec<String> = results.iter().filter_map(|(host, result)| result.as_ref().err().map(|error| format!("{host}: {error}"))).collect();
-        if failed.is_empty() { Ok(tf!("已探测 {} 台服务器", "Probed {} servers", results.len())) } else { Err(tf!("探测失败：{}", "Probe failed: {}", failed.join("；"))) }
+        Ok(self.probe_hosts(&hosts, "window:probe", None, None).into_iter().map(|(host, result)| (host, result.err())).collect())
     }
 
     /// Inspect the selected servers into the history. `origin` is `window` or `auto`.
@@ -693,10 +710,12 @@ impl Fleet {
         let probes: BTreeMap<String, HostProbe> = self.store.probes().unwrap_or_default();
         let blocks = self.runner.guard().list();
         let now_ms = time::now_ms() as f64;
+        // An alias says nothing about where it leads; ssh_config does.
+        let aliases: BTreeMap<String, String> = ssh_config::load_ssh_config_hosts(&self.config.ssh_config_file).map(|found| found.hosts).unwrap_or_default().into_iter().filter(|host| host.host_name.is_some() || host.user.is_some() || host.port.is_some()).map(|host| (host.alias.clone(), ssh_config::describe_ssh_config_host(&host))).collect();
         let hosts = loaded.inventory.hosts().iter().map(|host| {
             let muted = Self::mutes_of(host);
             let runs = self.store.read_history::<HistoryRecord>(&host.name, RUNS_KEPT).unwrap_or_default().into_iter().map(|record| {
-                let findings: Vec<FindingView> = record.findings.iter().map(|finding| FindingView { severity: finding.severity.as_str().into(), message: finding.message.clone(), muted: mutes::mute_for(finding, &muted, now_ms).is_some() }).collect();
+                let findings: Vec<FindingView> = record.findings.iter().map(|finding| FindingView { severity: finding.severity.as_str().into(), code: finding.code.clone(), message: finding.message.clone(), muted: mutes::mute_for(finding, &muted, now_ms).is_some() }).collect();
                 let state = if !record.is_ok() { "unreachable" } else { inspect::worst_severity(record.findings.iter().filter(|finding| mutes::mute_for(finding, &muted, now_ms).is_none())).map_or("ok", Severity::as_str) };
                 let disk_max = record.metrics.disk_pct.iter().max_by(|a, b| a.1.total_cmp(b.1)).map(|(mount, pct)| (mount.to_string(), *pct));
                 let disks = record.metrics.disk_pct.iter().map(|(mount, pct)| (mount.to_string(), *pct)).collect();
@@ -708,6 +727,7 @@ impl Fleet {
             HostView {
                 name: host.name.clone(),
                 address: format!("{}{}{}", host.user.as_ref().map(|user| format!("{user}@")).unwrap_or_default(), host.destination(), host.port.map(|port| format!(":{port}")).unwrap_or_default()),
+                target: if host.user.is_none() && host.port.is_none() { aliases.get(host.destination()).cloned().unwrap_or_default() } else { String::new() },
                 ssh: host.ssh.clone().unwrap_or_default(),
                 user: host.user.clone().unwrap_or_default(),
                 port: host.port.map(|port| port as u16),
@@ -750,7 +770,8 @@ impl Fleet {
 
     pub fn audit(&self, host: Option<&str>, hours: u32, limit: usize) -> Vec<AuditRow> {
         let filter = AuditFilter { hosts: host.map(|host| HashSet::from([host.to_string()])), since_ms: Some(time::now_ms() - i64::from(hours) * 3_600_000), limit };
-        self.store.read_audit(&filter).unwrap_or_default().into_iter().map(|entry| AuditRow { at: entry.at, host: entry.host, tool: entry.tool, risk: entry.risk.as_str().into(), sudo: entry.sudo, authorization: word(&entry.authorization), status: entry.status.as_str().into(), exit_code: entry.exit_code, command: entry.command, reason: entry.reason.unwrap_or_default(), duration_ms: entry.duration_ms }).collect()
+        // The store keeps them as they happened; the page reads from what happened last.
+        self.store.read_audit(&filter).unwrap_or_default().into_iter().rev().map(|entry| AuditRow { at: entry.at, host: entry.host, tool: entry.tool, risk: entry.risk.as_str().into(), sudo: entry.sudo, authorization: word(&entry.authorization), status: entry.status.as_str().into(), exit_code: entry.exit_code, command: entry.command, reason: entry.reason.unwrap_or_default(), duration_ms: entry.duration_ms }).collect()
     }
 
     // ---- the inventory the window keeps (managed.json)

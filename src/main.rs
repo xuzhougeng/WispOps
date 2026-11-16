@@ -15,6 +15,7 @@ mod audit;
 mod chat;
 mod dialogs;
 mod disk;
+mod findings;
 mod input;
 mod longrun;
 mod markdown;

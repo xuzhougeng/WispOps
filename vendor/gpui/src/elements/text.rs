@@ -334,7 +334,7 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
+        let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
@@ -373,9 +373,15 @@ impl TextLayout {
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
                     && text_layout.size.is_some()
                     && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                    // A truncated line depends on the width it is given: the size measured
+                    // without one (max-content) must not answer for it, or nothing is ever cut.
+                    && truncate_width.is_none()
                 {
                     return text_layout.size.unwrap();
                 }
+
+                // Truncation rewrites the runs; each measurement starts from the originals.
+                let mut runs = runs.clone();
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let text = if let Some(truncate_width) = truncate_width {

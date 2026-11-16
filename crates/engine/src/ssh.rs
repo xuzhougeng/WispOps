@@ -536,10 +536,47 @@ fn poll_interval(elapsed: Duration) -> Duration {
     }
 }
 
+/// The longest directory a ControlMaster socket fits in. A Unix socket path holds 104 bytes on
+/// macOS (108 on Linux); `%C` is 40 and ssh adds a 17-byte suffix while the master starts.
+const CONTROL_DIR_MAX: usize = 104 - 1 - 40 - 17 - 1;
+
+/// The `ControlPath` of the ControlMaster sockets: `<data_dir>/cm/%C`, or, when the data
+/// folder's path is too long for a socket (ssh then refuses every connection with "ControlPath
+/// too long"), a name in the user's own directory under `/tmp` that starts with a digest of the
+/// data folder, so two data folders never share a master. `None` gives up multiplexing rather
+/// than connecting.
+fn control_path_for(data_dir: &Path) -> Option<String> {
+    let own = data_dir.join("cm");
+    if cfg!(windows) || own.as_os_str().len() <= CONTROL_DIR_MAX {
+        let _ = create_private_dir(&own);
+        return Some(own.join("%C").to_string_lossy().into_owned());
+    }
+    short_control_path(data_dir)
+}
+
+#[cfg(unix)]
+fn short_control_path(data_dir: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::MetadataExt;
+    let uid = unsafe { libc::getuid() };
+    let dir = PathBuf::from(format!("/tmp/wispops-{uid}"));
+    create_private_dir(&dir).ok()?;
+    // /tmp is everyone's: take the directory only if it is ours alone, and not a link to elsewhere.
+    let meta = std::fs::symlink_metadata(&dir).ok()?;
+    if !(meta.is_dir() && meta.uid() == uid && meta.mode() & 0o077 == 0) { return None }
+    let digest = crate::fsutil::hex(&Sha256::digest(data_dir.to_string_lossy().as_bytes()));
+    Some(format!("{}/{}-%C", dir.display(), &digest[..8]))
+}
+
+#[cfg(not(unix))]
+fn short_control_path(_: &Path) -> Option<String> {
+    None
+}
+
 pub struct SshRunner {
     spec: SshSpec,
     max_output_bytes: usize,
-    control_dir: Option<PathBuf>,
+    control_path: Option<String>,
     legacy: Option<&'static Encoding>,
     guard: AuthGuard,
     env: HashMap<String, String>,
@@ -547,17 +584,11 @@ pub struct SshRunner {
 
 impl SshRunner {
     /// A runner for this transport configuration. `max_output_bytes` caps each captured stream;
-    /// the ControlMaster sockets live in `<data_dir>/cm`.
+    /// the ControlMaster sockets live in `<data_dir>/cm`, or under `/tmp/wispops-<uid>` when that path is too long for a socket.
     pub fn new(spec: SshSpec, max_output_bytes: usize, data_dir: &Path) -> Self {
-        let control_dir = if spec.control_persist_sec > 0 {
-            let dir = data_dir.join("cm");
-            let _ = create_private_dir(&dir);
-            Some(dir)
-        } else {
-            None
-        };
+        let control_path = if spec.control_persist_sec > 0 { control_path_for(data_dir) } else { None };
         let guard = AuthGuard::new(spec.auth_failure_block_minutes as i64 * 60_000);
-        SshRunner { spec, max_output_bytes, control_dir, legacy: system_legacy_decoder(), guard, env: HashMap::new() }
+        SshRunner { spec, max_output_bytes, control_path, legacy: system_legacy_decoder(), guard, env: HashMap::new() }
     }
 
     /// Extra environment variables for every ssh process this runner starts.
@@ -652,9 +683,9 @@ impl SshRunner {
         } else {
             option(&mut args, "BatchMode=yes".to_string());
         }
-        if let Some(control_dir) = &self.control_dir {
+        if let Some(control_path) = &self.control_path {
             option(&mut args, "ControlMaster=auto".to_string());
-            option(&mut args, format!("ControlPath={}", control_dir.join("%C").to_string_lossy()));
+            option(&mut args, format!("ControlPath={control_path}"));
             option(&mut args, format!("ControlPersist={}s", self.spec.control_persist_sec));
         }
         if let Some(identity) = &host.identity_file {

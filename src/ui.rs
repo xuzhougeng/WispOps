@@ -231,6 +231,10 @@ pub fn meter(pct: f64, color: Hsla) -> Div {
 /// soft fill, broken where there was no value. Each inspection has a column that says its
 /// own value on hover (`tips`, as many as `values`).
 pub fn trend(id: &str, values: Vec<Option<f64>>, tips: Vec<String>, top: f64, color: Hsla, height: f32) -> Div {
+    // One inspection is a point, not a trend: say so instead of drawing a lone dot.
+    if values.len() < 2 {
+        return div().flex().items_center().w_full().h(px(height)).child(div().truncate().text_size(text_px(11.)).text_color(Theme::text_placeholder()).child(crate::i18n::t("再巡检一次后画出变化").to_string()));
+    }
     let columns = tips.into_iter().enumerate().map(|(n, words)| div().id(SharedString::from(format!("{id}-{n}"))).flex_1().h_full().rounded(px(2.)).hover(|s| s.bg(Theme::hover())).tooltip(tip(words))).collect::<Vec<_>>();
     let ring = Theme::bg_body();
     let line = canvas(|_, _, _| (), move |bounds, _, window, _| {
