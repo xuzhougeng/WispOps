@@ -144,6 +144,8 @@ impl Workspace {
                 self.apply_appearance(window);
             }
             Cmd::SetAutoInspect(minutes) => self.settings.auto_inspect_minutes = minutes,
+            Cmd::SetDiskScan(minutes) => self.settings.disk_scan_minutes = minutes,
+            Cmd::SetLongHours(hours) => self.settings.long_job_hours = hours,
             Cmd::PickChatModel(id) => self.settings.chat_model = id,
             Cmd::AddProvider(key) => {
                 let provider = provider::preset(key).map(Provider::from_preset).unwrap_or_default();

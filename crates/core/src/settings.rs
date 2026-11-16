@@ -49,12 +49,16 @@ pub struct Settings {
     pub chat_hidden: bool,
     /// Minutes between automatic read-only inspections of every server; 0 is off.
     pub auto_inspect_minutes: u32,
+    /// Minutes between the follow-up scans of the directories a first disk scan measured; 0 is off.
+    pub disk_scan_minutes: u32,
+    /// A user's task counts as long-running after this many hours.
+    pub long_job_hours: u32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         let providers = provider::DEFAULT_PRESETS.iter().filter_map(|key| provider::preset(key)).map(Provider::from_preset).collect();
-        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, auto_inspect_minutes: 0 };
+        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24 };
         settings.tidy();
         settings
     }
@@ -66,6 +70,12 @@ pub const MAX_FONT_SIZE: f32 = 20.;
 
 /// The intervals 自动巡检 offers, in minutes; 0 is off.
 pub const AUTO_INSPECT: [u32; 9] = [0, 5, 15, 30, 60, 180, 360, 720, 1440];
+
+/// The intervals the follow-up disk scans offer, in minutes; 0 is off.
+pub const DISK_SCAN: [u32; 5] = [0, 360, 720, 1440, 10080];
+
+/// The thresholds 长时任务 offers, in hours.
+pub const LONG_JOB_HOURS: [u32; 6] = [6, 12, 24, 48, 72, 168];
 
 /// Keep a hand-edited settings file from making the interface unusable.
 pub fn font_size(value: f32) -> f32 {
@@ -164,6 +174,8 @@ impl Settings {
         if self.model(&self.chat_model).is_none() { self.chat_model.clear() }
         if !self.chat_width.is_finite() || self.chat_width < 0. { self.chat_width = 0. }
         if !AUTO_INSPECT.contains(&self.auto_inspect_minutes) { self.auto_inspect_minutes = 0 }
+        if !DISK_SCAN.contains(&self.disk_scan_minutes) { self.disk_scan_minutes = 1440 }
+        if !LONG_JOB_HOURS.contains(&self.long_job_hours) { self.long_job_hours = 24 }
     }
 
     /// The first of `m1`, `m2`, … no model has yet.

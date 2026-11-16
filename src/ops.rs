@@ -19,7 +19,7 @@ use wisp_ops_collect::mutes::{self, Mute};
 use wisp_ops_collect::probe::HostProbe;
 use wisp_ops_collect::render::{self, Run};
 use wisp_ops_collect::service_checks::{self, ServiceCheck};
-use wisp_ops_collect::{FleetCounts, FleetInspection, HistoryRecord, HostInspectionResult, Thresholds, disk, files, security, space, trends, util};
+use wisp_ops_collect::{FleetCounts, FleetInspection, HistoryRecord, HostInspectionResult, Thresholds, attacks, disk, files, security, space, trends, util};
 use wisp_ops_engine::config::{self, AuthMethod, Capability, Config, HostSpec, Permission, Playbook, PolicySpec, TaskSchedule, TaskSpec};
 use wisp_ops_engine::inventory::{Host, Inventory};
 use wisp_ops_engine::managed::{CredentialBinding, ManagedState, managed_store};
@@ -216,6 +216,10 @@ pub struct View {
     pub credentials: Vec<CredentialView>,
     pub tasks: Vec<TaskView>,
     pub audit: Vec<AuditRow>,
+    /// The latest check for long-running tasks of each server that has one.
+    pub long_runs: BTreeMap<String, wisp_ops_collect::longrun::LongRunSnapshot>,
+    /// The latest security triage of each server that has one.
+    pub attacks: BTreeMap<String, attacks::SecuritySnapshot>,
     pub inventory_error: Option<String>,
     pub vault_error: Option<String>,
     pub vault_key_place: &'static str,
@@ -593,17 +597,20 @@ impl Fleet {
         let result = self.execute_one(std::slice::from_ref(host), &space::space_script(&options), &exec).remove(0);
         if !result.stdout.contains("@@end") { return (None, result) }
         let report = space::parse_space(&result.stdout, &options);
-        let _ = self.store.append_bounded("space", &host.name, &space::SpaceSnapshot { report: report.clone(), at: time::to_iso(time::now_ms()) }, 20);
+        let _ = self.store.append_bounded("space", &host.name, &space::SpaceSnapshot { report: report.clone(), at: time::to_iso(time::now_ms()) }, 24);
         (Some((report, previous)), result)
     }
 
-    /// Security triage on a set of hosts.
+    /// Security triage on a set of hosts, with the login attacks counted in the same run; what
+    /// was found is kept for the security page, whoever asked.
     pub fn security(&self, hosts: &[Host], hours: u32, collect: &Collect) -> Vec<(String, Option<security::SecurityReport>, RunResult)> {
         let options = security::SecurityOptions { hours };
         let mut exec = collect.exec(self.clamp_timeout(Some(90_000 + self.config.ssh.connect_timeout_sec * 1000)), "(built-in read-only security triage)");
         exec.max_output_bytes = Some(2 << 20);
-        self.execute_one(hosts, &security::security_script(&options), &exec).into_iter().map(|result| {
+        let at = time::to_iso(time::now_ms());
+        self.execute_one(hosts, &attacks::attack_script(&options), &exec).into_iter().map(|result| {
             let report = result.stdout.contains("@@end").then(|| security::parse_security(&result.stdout, &options));
+            if let Some(report) = &report { let _ = self.store.append_bounded("security", &result.host, &attacks::SecuritySnapshot { at: at.clone(), hours, report: report.clone(), attacks: attacks::parse_attacks(&result.stdout, Utc::now()) }, 5); }
             (result.host.clone(), report, result)
         }).collect()
     }
@@ -676,6 +683,8 @@ impl Fleet {
     // ---- the view
 
     pub fn view(&self) -> View {
+        // Read before the inventory is held: both look the hosts up themselves.
+        let (long_runs, attacks) = (self.long_runs(), self.attacks());
         let loaded = self.loaded.read().unwrap();
         let probes: BTreeMap<String, HostProbe> = self.store.probes().unwrap_or_default();
         let blocks = self.runner.guard().list();
@@ -732,7 +741,7 @@ impl Fleet {
             TaskView { name: task.name.clone(), draft: draft_of(task), managed: loaded.managed_tasks.contains(&task.name), scheduled: timed.is_some(), enabled: entry.is_some(), when: describe_when(task.schedule.as_ref()), next, last: last.map(|record| TaskLast { at: record.at.clone(), problems: record.has_problems(), summary: record.summary() }), error: entry.and_then(|entry| entry.last_error.clone()) }
         }).collect();
         let limits = Limits { gpu_temp: self.thresholds.gpu_temp_warn_c, disk: (self.thresholds.disk_warn_pct, self.thresholds.disk_crit_pct), mem_avail: (self.thresholds.mem_avail_warn_pct, self.thresholds.mem_avail_crit_pct), load_per_core: (self.thresholds.load_per_core_warn, self.thresholds.load_per_core_crit) };
-        View { limits, hosts, credentials, tasks, audit: vec![], inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" } }
+        View { limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" } }
     }
 
     pub fn audit(&self, host: Option<&str>, hours: u32, limit: usize) -> Vec<AuditRow> {

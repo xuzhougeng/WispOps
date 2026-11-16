@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wisp_ops_collect::render::{render_inspection, render_runs};
-use wisp_ops_collect::{HistoryRecord, disk, files, security, trends};
+use wisp_ops_collect::{HistoryRecord, disk, files, longrun, security, trends};
 use wisp_ops_core::ai;
 use wisp_ops_engine::change;
 use wisp_ops_engine::inventory::Host;
@@ -75,6 +75,7 @@ pub fn catalog() -> Vec<ai::Tool> {
         tool("ops_disk", "Diagnose a full or growing filesystem on one server, read-only: usage and inodes, largest directories (with growth since the previous diagnosis of the same path), largest and recently modified large files, which of them are held open by processes or sit inside running job directories, space pinned by deleted-but-open files, journal/docker/package/conda/pip caches, rotated logs. Every file gets a verdict (in-use, job-directory, rotated-log, core-dump, recently-written, review). Propose a cleanup plan from this, execute it with ops_exec (it will need approval), then run ops_disk again on the same path to verify the space was freed.", json!({"host": {"type": "string", "description": "One inventory host name."}, "path": {"type": "string", "description": "Absolute path on the filesystem to diagnose; default /."}, "depth": {"type": "integer", "description": "Directory depth for sizes; default 2."}, "top": {"type": "integer", "description": "Rows per list; default 15."}, "minFileMb": {"type": "integer", "description": "Large-file threshold in MiB; default 100."}, "sudo": {"type": "boolean", "description": "Run as root to see all directories and every process holding files (needs sudo permission)."}}), &["host"]),
         tool("ops_files", "Recent-file analysis (近期新增文件分析) on one server, read-only: files modified in the last N days under the given roots — total volume, where it landed (with growth since the previous scan), owners, what kind of data it is with sequencing/bioinformatics knowledge, which files are still open or inside running job directories, which are superseded by a processed or compressed sibling, and a cleanup plan ordered by reclaimable space with the checks to run first. Never deletes anything; execute chosen steps with ops_exec.", json!({"host": {"type": "string", "description": "One inventory host."}, "paths": {"type": "string", "description": "Absolute roots to scan, comma separated (e.g. /data,/home)."}, "days": {"type": "integer", "description": "Window in days; default 7."}, "sudo": {"type": "boolean", "description": "Scan as root to see every user's files (needs sudo permission)."}}), &["host", "paths"]),
         tool("ops_security", "Security triage (网络攻击排查) on servers, read-only: SSH brute force by source and successful logins, connection and SYN floods, listening services, crypto-miner-like processes, processes running deleted binaries or from /tmp and /dev/shm, outbound connections to common mining/C2 ports, extra UID-0 accounts, and recently changed authorized_keys, cron and systemd units. Use sudo=true for the auth log and all processes. Findings are leads to confirm, not verdicts; containment goes through ops_exec with approval.", json!({"targets": {"type": "string", "description": "Selector; default all."}, "hours": {"type": "integer", "description": "Look-back window in hours; default 24."}, "sudo": {"type": "boolean", "description": "Run as root (recommended; needs sudo permission)."}}), &[]),
+        tool("ops_jobs", "Long-running user work (长时任务), read-only: the processes of ordinary accounts and the running Slurm jobs that are older than a threshold on each server — owner, how long, lifetime CPU, memory, state (stopped, zombie, idle) and command. Session plumbing (login shells, tmux, sshd) is left out and a process tree is reported once, at its oldest member. Use it to find forgotten or stuck work. It never ends anything: stopping a task goes through ops_exec with approval, and only when its owner or the user says so.", json!({"targets": {"type": "string", "description": "Selector; default all."}, "hours": {"type": "integer", "description": "Report work running at least this many hours; default 24."}}), &[]),
         tool("ops_change", "Managed change on one or more hosts with enforced backup, apply, verify and automatic restore on failure, rolled out host by host in inventory order and stopped at the first host that does not verify. List EVERY path the command can touch: files = existing regular files (copied), newFiles = paths that must not exist yet (deleted on failure), directories = existing directories (tar backup, replaced on failure). afterRollback reloads restored configuration if needed. Unlisted side effects (packages, databases) are not rolled back. An interrupted connection has an unknown outcome: inspect before retrying. Backups stay on the host; ops_history kind=changes lists them.", json!({"targets": {"type": "string", "description": "Selector. Hosts are changed one at a time; start with one canary host."}, "files": {"type": "array", "items": {"type": "string"}}, "newFiles": {"type": "array", "items": {"type": "string"}}, "directories": {"type": "array", "items": {"type": "string"}}, "command": {"type": "string", "description": "Apply the change; nonzero exit triggers rollback."}, "verify": {"type": "string", "description": "Verification script; nonzero exit triggers rollback."}, "afterRollback": {"type": "string"}, "reason": {"type": "string"}, "sudo": {"type": "boolean"}, "timeoutMs": {"type": "integer", "description": "Per-stage timeout, default 15000."}}), &["targets", "command", "verify", "reason"]),
         tool("ops_task", "Run a routine task the user defined (a read-only check bound to some servers) and get its data, the user's instruction for the report, and the previous run for comparison. Without name, lists the tasks. mode=\"last\" returns the most recent recorded run without running anything: use it when asked to report on a run the app already made. Write the report as instructed; do not change anything during a task.", json!({"name": {"type": "string", "description": "Task name; omit to list tasks."}, "mode": {"type": "string", "enum": ["run", "last"]}}), &[]),
         tool("ops_history", "Read past operations (the audit log of every remote command, with risk, authorization and result), past inspections (health findings and metrics over time), trends, or managed changes with their retained remote backups. Use it for \"what changed\", \"when did this start\", failure history and \"where is the backup\".", json!({"kind": {"type": "string", "enum": ["operations", "inspections", "trends", "changes"]}, "targets": {"type": "string", "description": "Selector; default all."}, "sinceHours": {"type": "number", "description": "Only entries newer than this; default 168."}, "limit": {"type": "integer", "description": "Maximum entries (per host for inspections); default 50."}}), &["kind"]),
@@ -90,7 +91,7 @@ Rules that always hold:\n\
 - Every call is risk-classified. Read-only commands and the built-in inspection, diagnosis and triage run at once. Anything that changes state, uses sudo, or is destructive is settled per host by the user's policy: allowed, asked (the user sees a card with the hosts, the exact command and your reason, and approves or declines this one call), or denied. A denial by policy is final: do not rephrase the command to get around it, and say what was refused.\n\
 - When the user declines a call, do not retry it. Explain what it would do and let them decide.\n\
 - Passwords come from the user's vault and go straight to SSH and sudo. You never see them and must never ask for them. Use sudo=true rather than writing sudo in a command.\n\
-- Diagnose before you change. Start with ops_inspect / ops_disk / ops_security / read-only ops_exec, show the evidence (numbers, paths, processes), then propose a plan. For changes to configuration files prefer ops_change (backup, apply, verify, automatic rollback), one canary host first.\n\
+- Diagnose before you change. Start with ops_inspect / ops_disk / ops_security / ops_jobs / read-only ops_exec, show the evidence (numbers, paths, processes), then propose a plan. For changes to configuration files prefer ops_change (backup, apply, verify, automatic rollback), one canary host first.\n\
 - Give a reason for every call that is not read-only: it is shown to the user and kept in the audit log.\n\
 - Never delete data whose owner or purpose is unclear; files in use or inside running job directories are left alone and reported to their owners.\n\
 - After a change, verify it (run the same diagnosis again) and report what actually happened, including failures.\n\n\
@@ -141,6 +142,7 @@ pub fn describe_call(name: &str, args: &Value) -> String {
         "ops_disk" => format!("{}：{sudo}{} {}", t("磁盘诊断"), text(args, "host").unwrap_or("?"), text(args, "path").unwrap_or("/")),
         "ops_files" => format!("{}：{sudo}{} {}", t("新增文件分析"), text(args, "host").unwrap_or("?"), text(args, "paths").unwrap_or("?")),
         "ops_security" => format!("{}：{sudo}{}", t("安全排查"), text(args, "targets").unwrap_or("all")),
+        "ops_jobs" => format!("{}：{}", t("长时任务"), text(args, "targets").unwrap_or("all")),
         "ops_change" => format!("{}：{sudo}{} → {}", t("安全变更"), short(text(args, "command").unwrap_or("")), text(args, "targets").or(text(args, "host")).unwrap_or("?")),
         "ops_task" => match text(args, "name") {
             Some(task) if args["mode"] == "last" => format!("{}：{task}", t("读取任务结果")),
@@ -183,6 +185,7 @@ fn plan(fleet: &Fleet, name: &str, args: &Value) -> Result<Option<Planned>, Stri
         "ops_disk" => built(text(args, "host").ok_or("host is required")?, format!("(built-in read-only disk diagnosis of {})", text(args, "path").unwrap_or("/"))),
         "ops_files" => built(text(args, "host").ok_or("host is required")?, format!("(built-in read-only recent-file analysis of {})", text(args, "paths").unwrap_or("?"))),
         "ops_security" => built(text(args, "targets").unwrap_or("all"), "(built-in read-only security triage)".into()),
+        "ops_jobs" => Planned { sudo: false, ..built(text(args, "targets").unwrap_or("all"), "(built-in read-only check for long-running tasks)".into()) },
         "ops_task" => {
             let Some(task) = text(args, "name").and_then(|name| fleet.inventory().task(name).cloned()) else { return Ok(None) };
             if args["mode"] == "last" { return Ok(None) }
@@ -314,6 +317,13 @@ pub fn run(fleet: &Fleet, session: &str, name: &str, args: &Value, ticket: Ticke
             let voucher = take(&ticket, name, &hosts)?;
             let hours = number(args, "hours", 24, 1, 24 * 90) as u32;
             Ok(fleet.security(&hosts, hours, &collect(&voucher)).into_iter().map(|(host, report, result)| match report { Some(report) => security::render_security(&host, &report, hours), None => render_runs(&[as_run(&result)], 2000) }).collect::<Vec<_>>().join("\n\n"))
+        }
+        "ops_jobs" => {
+            let hosts = fleet.select(text(args, "targets").unwrap_or("all"))?;
+            let voucher = take(&ticket, name, &hosts)?;
+            let hours = number(args, "hours", 24, 1, 24 * 365) as u32;
+            let collect = Collect { sudo: false, ..collect(&voucher) };
+            Ok(fleet.long_jobs_on(&hosts, hours, &collect).into_iter().map(|(host, report, result)| match report { Some(report) => longrun::render_longrun(&host, &report), None => render_runs(&[as_run(&result)], 2000) }).collect::<Vec<_>>().join("\n\n"))
         }
         "ops_change" => run_change(fleet, session, args, &ticket, cancel),
         "ops_task" => {
@@ -515,6 +525,8 @@ pub fn origin_label(tool: &str) -> &'static str {
         "任务"
     } else if tool.starts_with("window:auto") {
         "自动巡检"
+    } else if tool.starts_with("window:disk-auto") {
+        "增量扫描"
     } else if tool.starts_with("window") {
         "窗口"
     } else {

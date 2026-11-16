@@ -184,6 +184,21 @@ pub fn status_colors(value: &str) -> (Hsla, Hsla) {
     if dark() { (c(bright), c(bright).opacity(0.16)) } else { (c(light), c(fill)) }
 }
 
+/// The hues of a space map's blocks, one per directory of the open level; nested blocks keep
+/// their parent's. Drawn as a faint fill, a stronger border and the text, all of the one hue.
+const MAP_HUES: [(u32, u32); 10] = [(0x7858D2, 0xAA96F5), (0x1978B4, 0x6EBEF0), (0x1E875F, 0x6ECDA0), (0xC45A22, 0xF09B69), (0x4E5CCE, 0x8C9BF5), (0xBE3C78, 0xEB82B4), (0x0F8085, 0x5FC8CD), (0x9C6A0A, 0xE1B95F), (0x587828, 0xA5C869), (0x925ABE, 0xC396EB)];
+
+/// The hue of the `index`-th block of a space map.
+pub fn map_hue(index: usize) -> Hsla {
+    let (light, dark) = MAP_HUES[index % MAP_HUES.len()];
+    pick(light, dark)
+}
+
+/// What a space map draws without a hue of its own: files, the directories too small to list, free space.
+pub fn map_neutral() -> Hsla {
+    pick(0x707A8C, 0x96A0B2)
+}
+
 pub fn shadow_panel() -> Vec<BoxShadow> {
     let strength = if dark() { 3. } else { 1. };
     vec![
