@@ -641,6 +641,11 @@ impl Fleet {
         }
     }
 
+    /// Full permission for one conversation: nothing a host's policy asks about is asked again.
+    pub fn grant_full(&self, session: &str) {
+        self.grants.add_full(session);
+    }
+
     pub fn revoke_grants(&self, session: &str) {
         self.grants.revoke(session, "all");
     }

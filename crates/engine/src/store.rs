@@ -29,6 +29,8 @@ pub enum Authorization {
     ReadOnly,
     Policy,
     Grant,
+    /// Full permission the human gave one conversation.
+    Full,
     Approval,
     Task,
 }
