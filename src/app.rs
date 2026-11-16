@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use wisp_ops_core::settings::{Language, Settings, default_root, settings_file};
 
-actions!(workspace, [Dismiss, ToggleAssistant, NewChat, ShowSettings, Refresh]);
+actions!(workspace, [Dismiss, ToggleAssistant, NewChat, ShowSettings, Refresh, FocusNext, FocusPrev]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -214,6 +214,8 @@ pub struct Workspace {
     pub modal: Option<Modal>,
     pub modal_error: String,
     pub modal_busy: bool,
+    /// A dialog just opened: its first field (or the window, for one without fields) takes focus when it is drawn.
+    pub modal_focus: bool,
     pub modal_subscriptions: Vec<Subscription>,
     pub menu: Option<Menu>,
     pub toast: Option<Toast>,
@@ -248,7 +250,7 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -519,6 +521,25 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Tab and Shift+Tab: the next or previous text field in the order drawn. While a dialog is
+    /// open, focus stays among its fields; the page behind it is drawn too, so steps that land
+    /// there are passed over. A dialog without fields keeps focus where it is.
+    fn focus_step(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let step = |window: &mut Window| if forward { window.focus_next() } else { window.focus_prev() };
+        let Some(modal) = self.modal.as_ref() else { return step(window) };
+        let fields: Vec<FocusHandle> = modal.inputs().into_iter().map(|input| input.focus_handle(cx)).collect();
+        if fields.is_empty() { return }
+        let start = window.focused(cx);
+        // Bounded: a field not drawn this frame is no tab stop, and the order wraps around.
+        for _ in 0..256 {
+            step(window);
+            let now = window.focused(cx);
+            if now.as_ref().is_some_and(|now| fields.contains(now)) { return }
+            if now.is_none() || now == start { break }
+        }
+        if let Some(start) = start { window.focus(&start) }
+    }
+
     pub fn show_chat(&mut self, cx: &mut Context<Self>) {
         if self.settings.chat_hidden {
             self.settings.chat_hidden = false;
@@ -555,6 +576,9 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-n", NewChat, context),
         KeyBinding::new("secondary-,", ShowSettings, context),
         KeyBinding::new("secondary-r", Refresh, context),
+        // A field's own Tab (choosing in a list) comes first; otherwise these move between fields.
+        KeyBinding::new("tab", FocusNext, context),
+        KeyBinding::new("shift-tab", FocusPrev, context),
     ]);
 }
 
@@ -587,6 +611,8 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.run(Cmd::NewChat, window, cx)))
             .on_action(cx.listener(|this, _: &ShowSettings, window, cx| this.run(Cmd::SetPage(Page::Settings), window, cx)))
             .on_action(cx.listener(|this, _: &Refresh, window, cx| this.run(Cmd::Refresh, window, cx)))
+            .on_action(cx.listener(|this, _: &FocusNext, window, cx| this.focus_step(true, window, cx)))
+            .on_action(cx.listener(|this, _: &FocusPrev, window, cx| this.focus_step(false, window, cx)))
             .child(
                 div()
                     .flex()
@@ -784,6 +810,12 @@ impl Workspace {
             "en" => crate::i18n::set_language(Language::En),
             "ask" => self.run(Cmd::Suggest(arg.replace('+', " ")), window, cx),
             "type" => self.run(Cmd::Draft(arg.replace('+', " ")), window, cx),
+            // A key as the keyboard sends it, to the focused element: `key:tab`, `key:shift-tab`.
+            "key" => match Keystroke::parse(arg) {
+                // Deferred: the key reaches this workspace, which is being updated now.
+                Ok(keystroke) => window.defer(cx, move |window, cx| _ = window.dispatch_keystroke(keystroke, cx)),
+                Err(_) => eprintln!("dev: not a key {arg}"),
+            },
             "consent" => self.run(Cmd::AnswerTools(match arg { "deny" => Consent::Deny, "grant" => Consent::Grant, _ => Consent::Once }), window, cx),
             "inspect" => self.run(Cmd::InspectHosts(arg.to_string()), window, cx),
             "add-host" => self.run(Cmd::AddHost, window, cx),

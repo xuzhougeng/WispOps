@@ -86,6 +86,21 @@ pub enum Modal {
     Task(TaskForm),
 }
 
+impl Modal {
+    /// The text fields of the dialog in the order drawn, the first being where the caret starts;
+    /// Tab moves among those drawn (a task's paths or time only show for some choices). The forms
+    /// are taken apart field by field, so a form that gains a field does not build until it is here.
+    pub fn inputs(&self) -> Vec<&Entity<TextInput>> {
+        match self {
+            Modal::Host(HostForm { editing: _, name, address, user, port, groups, jump, identity, description }) => vec![name, groups, address, user, port, jump, identity, description],
+            Modal::Credential(CredentialForm { editing: _, name, username, password, note, agent: _ }) => vec![name, username, password, note],
+            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, sudo: _ }) => vec![name, description, targets, paths, commands, instruction, daily, every],
+            Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _ }) | Modal::Import(ImportForm { rows: _ }) => vec![],
+            Modal::Confirm { .. } | Modal::Text { .. } => vec![],
+        }
+    }
+}
+
 impl Workspace {
     /// A text field of a dialog: Enter in a one-line field submits, Escape closes.
     pub fn modal_input(&mut self, placeholder: &'static str, text: &str, multiline: bool, cx: &mut Context<Self>) -> Entity<TextInput> {
@@ -121,6 +136,7 @@ impl Workspace {
         self.modal = Some(modal);
         self.modal_error.clear();
         self.modal_busy = false;
+        self.modal_focus = true;
         cx.notify();
     }
 
@@ -162,6 +178,12 @@ impl Workspace {
 
     pub fn render_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let modal = self.modal.as_ref()?;
+        // The caret goes to the first field of a dialog just opened. One without fields takes
+        // focus from the page behind it, so keys typed there do not land in a hidden field.
+        if std::mem::take(&mut self.modal_focus) {
+            let focus = modal.inputs().first().map(|input| input.focus_handle(cx)).unwrap_or_else(|| self.focus.clone());
+            window.focus(&focus);
+        }
         let field = |label: &str, input: &Entity<TextInput>, window: &Window, cx: &App| ui::form_row(t(label).to_string(), ui::field(input, window, cx));
         let (title, width, body, label, danger): (String, f32, Div, Option<String>, bool) = match modal {
             Modal::Confirm { title, message, label, danger, .. } => (title.clone(), 440., div().child(div().text_color(Theme::text_secondary()).line_height(text_px(21.)).child(message.clone())), Some(label.clone()), *danger),

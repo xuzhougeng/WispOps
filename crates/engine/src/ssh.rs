@@ -23,6 +23,7 @@ use encoding_rs::Encoding;
 use serde::{Deserialize, Serialize};
 
 use crate::config::SshSpec;
+use crate::fsutil::no_window;
 use crate::diagnose::{Diagnosis, SshTarget, diagnose_target, parse_ssh_g};
 use crate::fsutil::{create_private_dir, expand_home};
 use crate::inventory::Host;
@@ -579,7 +580,7 @@ impl SshRunner {
         let mut args = vec!["-G".to_string()];
         let argv = self.argv(host, false, false);
         args.extend_from_slice(&argv[..argv.len() - 1]);
-        let mut child = Command::new(&self.spec.binary).args(&args).envs(&self.env).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        let mut child = no_window(&mut Command::new(&self.spec.binary)).args(&args).envs(&self.env).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
         let started = Instant::now();
         let (done_tx, done_rx) = mpsc::channel();
         let capture = capture_stream(child.stdout.take()?, 1024 * 1024, started, done_tx);
@@ -719,7 +720,7 @@ impl SshRunner {
         let redact = |text: String| secrets.iter().fold(text, |acc, secret| acc.replace(secret, "[REDACTED]"));
         let with_password = request.sudo && request.sudo_password.is_some();
         let mut command = Command::new(&self.spec.binary);
-        command.args(self.argv(host, request.sudo, with_password)).envs(&self.env).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        no_window(&mut command).args(self.argv(host, request.sudo, with_password)).envs(&self.env).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(env) = askpass_env { command.envs(env.iter().map(|(key, value)| (key, value))); }
         let mut child = match command.spawn() {
             Ok(child) => child,
@@ -744,8 +745,10 @@ impl SshRunner {
         }
         if request.time_login { script.push_str("echo @@login\n") }
         script.push_str(&prelude(self.spec.load_profile, &self.spec.extra_path));
-        script.push_str(&request.script);
-        if !request.script.ends_with('\n') { script.push('\n') }
+        // `sh` reads a CR before LF as part of the line (`LC_ALL=C\r`, `fi\r`): a script written or
+        // checked out on Windows would fail on every host, so line ends go as LF.
+        script.push_str(&request.script.replace("\r\n", "\n"));
+        if !script.ends_with('\n') { script.push('\n') }
         if let Some(mut stdin) = child.stdin.take() {
             // A separate thread, so a remote that never reads cannot stall the wait loop below.
             std::thread::spawn(move || {

@@ -202,7 +202,8 @@ const BULLET: &str = "•";
 impl TextInput {
     pub fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         TextInput {
-            focus: cx.focus_handle(),
+            // A tab stop: Tab outside a list moves to the next field (`Workspace::focus_step`).
+            focus: cx.focus_handle().tab_stop(true),
             text: String::new(),
             sel: 0..0,
             reversed: false,

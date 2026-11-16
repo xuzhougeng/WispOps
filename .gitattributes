@@ -1,0 +1,4 @@
+# Shell scripts are embedded with include_str! and sent to remote `sh`; golden
+# files are compared byte for byte. Both must stay LF on every checkout, Windows
+# included (core.autocrlf would otherwise turn them into CRLF).
+* text=auto eol=lf
