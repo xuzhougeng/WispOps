@@ -29,6 +29,8 @@ pub mod ssh;
 pub mod ssh_config;
 /// Audit log, inspection history and other bounded JSON Lines stores.
 pub mod store;
+/// The task template library: built-in and saved templates, and the model's drafts.
+pub mod templates;
 /// Epoch-millisecond clock helpers and ISO-8601 formatting.
 pub mod time;
 /// The encrypted password vault.

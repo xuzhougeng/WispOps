@@ -26,6 +26,7 @@ mod security;
 mod servers;
 mod settings;
 mod tasks;
+mod templates;
 mod theme;
 mod tools;
 mod ui;

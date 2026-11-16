@@ -179,6 +179,16 @@ pub enum Cmd {
     PickPlaybook(&'static str),
     PickSchedule(&'static str),
     ToggleTaskSudo,
+    // ---- task templates
+    OpenTemplates,
+    /// Start a new task from this template.
+    UseTemplate(String),
+    /// Keep this task as a template.
+    SaveAsTemplate(String),
+    ReviewDraft(String),
+    DiscardDraft(String),
+    AskDeleteTemplate(String),
+    DeleteTemplate(String),
     // ---- audit
     AuditHost(Option<String>),
     AuditRange(u32),
@@ -616,6 +626,7 @@ impl Workspace {
             }
             cmd @ (Cmd::AddCredential | Cmd::EditCredential(_) | Cmd::DeleteCredential(_) | Cmd::ToggleAgentUse) => self.run_vault(cmd, window, cx),
             cmd @ (Cmd::AddTask | Cmd::EditTask(_) | Cmd::DeleteTask(_) | Cmd::RunTask(_) | Cmd::ToggleTask(_) | Cmd::PickPlaybook(_) | Cmd::PickSchedule(_) | Cmd::ToggleTaskSudo) => self.run_tasks(cmd, window, cx),
+            cmd @ (Cmd::OpenTemplates | Cmd::UseTemplate(_) | Cmd::SaveAsTemplate(_) | Cmd::ReviewDraft(_) | Cmd::DiscardDraft(_) | Cmd::AskDeleteTemplate(_) | Cmd::DeleteTemplate(_)) => self.run_templates(cmd, window, cx),
             Cmd::AuditHost(host) => {
                 self.audit_host = host;
                 self.page = Page::Audit;
@@ -1020,6 +1031,14 @@ impl Workspace {
             "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
             "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
+            // The template library, a new task from a template, a task kept as one, the nth draft under review: `templates`, `use-template:builtin.services`, `save-template:<task>`, `review-draft:0`.
+            "templates" => self.run(Cmd::OpenTemplates, window, cx),
+            "use-template" => self.run(Cmd::UseTemplate(arg.to_string()), window, cx),
+            "save-template" => self.run(Cmd::SaveAsTemplate(arg.to_string()), window, cx),
+            "review-draft" => {
+                let id = self.view.templates.drafts.get(arg.parse::<usize>().unwrap_or(0)).map(|draft| draft.id.clone()).unwrap_or_default();
+                self.run(Cmd::ReviewDraft(id), window, cx);
+            }
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),
             // The credential dialog of a server: `bind:web-01` for its login, `bind-sudo:web-01`; `bind-new` writes a new one.

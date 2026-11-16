@@ -82,6 +82,8 @@ pub struct TaskForm {
     pub daily: Entity<TextInput>,
     pub every: Entity<TextInput>,
     pub sudo: bool,
+    /// What the form keeps unseen, and the template a new task starts from.
+    pub origin: crate::templates::TaskOrigin,
 }
 
 pub enum Modal {
@@ -94,6 +96,9 @@ pub enum Modal {
     Bind(BindForm),
     Import(ImportForm),
     Task(TaskForm),
+    /// The task template library, to start a task from.
+    Templates,
+    Template(crate::templates::TemplateForm),
 }
 
 impl Modal {
@@ -104,9 +109,10 @@ impl Modal {
         match self {
             Modal::Host(HostForm { editing: _, name, address, user, port, groups, jump, identity, description }) => vec![name, groups, address, user, port, jump, identity, description],
             Modal::Credential(form) | Modal::Bind(BindForm { new: Some(form), .. }) => form.inputs(),
-            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, sudo: _ }) => vec![name, description, targets, paths, commands, instruction, daily, every],
+            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, sudo: _, origin }) => [vec![name, description, targets], origin.inputs(), vec![paths, commands, instruction, daily, every]].concat(),
+            Modal::Template(form) => form.inputs(),
             Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _, new: None }) | Modal::Import(ImportForm { rows: _ }) => vec![],
-            Modal::Confirm { .. } | Modal::Text { .. } => vec![],
+            Modal::Confirm { .. } | Modal::Text { .. } | Modal::Templates => vec![],
         }
     }
 }
@@ -173,6 +179,9 @@ impl Workspace {
                 return;
             }
             Modal::Text { .. } => Ok(()),
+            // Its button opens a blank task form in its place.
+            Modal::Templates => return self.run(Cmd::AddTask, window, cx),
+            Modal::Template(_) => self.submit_template(window, cx),
             Modal::Host(_) | Modal::Policy(_) | Modal::Bind(_) | Modal::Import(_) => self.submit_servers(window, cx),
             Modal::Credential(_) => self.submit_vault(window, cx),
             Modal::Task(_) => self.submit_task(window, cx),
@@ -371,6 +380,8 @@ impl Workspace {
                 false,
             ),
             Modal::Task(form) => self.task_form_body(form, window, cx),
+            Modal::Templates => self.template_library_body(cx),
+            Modal::Template(form) => self.template_form_body(form, window, cx),
         };
         let reading = label.is_none();
         // An import with nothing ticked has nothing to do: the button says so before it is pressed.
