@@ -1,0 +1,41 @@
+Fleet inspection 2026-10-29T00:00:00.000Z: 3 hosts — 1 critical, 0 warning, 1 unreachable, 1 healthy
+- gpu-01 [CRIT] load 60.1/32c, cpu 90%, mem avail 4%, disk max 95%, gpu 98%/0%, slurm 3 mixed, 1 drained, login 4200 ms, 240 failed ssh logins/h, net rx 610K/s tx 1K/s, 42 tcp (10% retrans)
+    crit: / 95% used (45.8G free of 916G)
+    crit: memory available 4% (10.1G of 252G) (muted by the owner as known)
+    crit: redis is failed
+    crit: port 8080 is not listening
+    crit: https://h/x answered nothing
+    warn: / grows 0.5 points a day and fills in about 10 days
+    warn: /data 80% used (1.3T free of 6.5T)
+    warn: /data grew 74% → 80% since 2026-10-28T00:00:00.000Z
+    warn: /data grows 1.8 points a day and fills in about 11 days
+    warn: swap 75% used
+    warn: load 60.1/55/40 on 32 cores (1.88 per core)
+    warn: failed systemd units: slurmd.service
+    warn: 12 zombie processes
+    warn: 2 OOM-killer messages in the last 24h
+    warn: GPU 0 at 87°C
+    warn: Slurm nodes need attention: gpu-02 drained (Kill task failed)
+    warn: SSH login took 4.2 s
+    warn: 10% of TCP segments were retransmitted during the sample
+    warn: new listening TCP ports: *:6379, *:8888
+    warn: new login sources: root from 203.0.113.7
+    warn: 240 failed SSH logins in the last hour
+    warn: system clock is not NTP-synchronized
+    info: 4 kernel error lines in the last 24h
+    info: GPU 1 holds 70000/81920 MiB at 0% utilization (pids 5151)
+    info: a package update requires a reboot
+    top cpu: python[4242 alice] 3190%
+    top mem: python[4242 alice] 12.5%
+    gpu 0 NVIDIA A100-SXM4-80GB: 98% util, 79000/81920 MiB, 87°C, pids 4242
+    gpu 1 NVIDIA A100-SXM4-80GB: 0% util, 70000/81920 MiB, 40°C, pids 5151
+    recent kernel errors:
+      Oct 26 10:00:00 gpu-01 kernel: NVRM: Xid 79
+    /: 95% of 916G
+    /data: 80% of 6.5T
+    listening: *:22, *:6379, *:8888, 10.0.0.5:9100
+    recent login sources: alice@10.0.0.9, root@203.0.113.7
+    interfaces: docker0 rx 4.8M/s tx 4.8M/s, eth0 rx 512K/s tx 1K/s, eth1 rx 98K/s tx 100B/s
+- down-01 [UNREACHABLE] inspection timeout
+    crit: inspection timeout
+- bare [OK] 

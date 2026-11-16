@@ -1,0 +1,27 @@
+## web-01: security triage, last 24h
+crit: 2400 failed SSH logins from 203.0.113.9 in 24h
+crit: successful password login as root from 203.0.113.9, which also had many failed attempts
+crit: crypto-miner-like process kdevtmpfsi /tmp/kdevtmpfsi [pid 31337, www-data, 390% CPU]
+crit: process kdevtmpfsi[31337] runs from a world-writable location: /tmp/kdevtmpfsi
+crit: accounts with UID 0 besides root: toor
+warn: 150 failed SSH logins from 198.51.100.7 in 24h
+warn: root logged in with a password from 203.0.113.9
+warn: 250 established connections from 192.0.2.44
+warn: process x[77] runs a binary that no longer exists on disk (/home/u/x (deleted)); malware often deletes itself after starting
+warn: outbound connection 10.0.0.8:51234 → 198.18.0.10:3333 (port often used by miners/C2)
+warn: /root/.ssh/authorized_keys changed at 2026-10-26T07:33:20.000Z
+warn: sshd allows root login with passwords (PermitRootLogin yes, PasswordAuthentication yes)
+info: logins from public addresses: root@203.0.113.9
+info: process node[2247] still runs a binary replaced since it started (/home/u/.nvm/node (deleted)); usually an upgrade — restart it to pick up the new version
+info: process node[78] runs /home/u/.nvm/versions/node/v18/bin/node (deleted), removed by an upgrade or uninstall of a managed tool; restart it if it should keep running
+info: brute force is ongoing and fail2ban (sshd jail) is not active
+
+Failed SSH logins by source: 203.0.113.9 ×2400, 198.51.100.7 ×150
+Successful logins: alice@10.0.0.5 (publickey) ×3, root@203.0.113.9 (password) ×1
+Logged in now: alice pts/0 2026-10-27 08:00 (10.0.0.5)
+
+Listening: 0.0.0.0:22 sshd
+Established connections by peer: 192.0.2.44 ×250; SYN-RECV 12
+sshd: permitrootlogin=yes, passwordauthentication=yes
+
+Treat findings as leads: confirm with logs and process details before blocking addresses or killing processes; containment steps (firewall rules, killing processes, disabling accounts) are changes that need approval.

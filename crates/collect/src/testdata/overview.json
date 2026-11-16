@@ -1,0 +1,113 @@
+{
+ "generatedAt": "2026-10-29T06:00:00.000Z",
+ "limit": 3,
+ "hosts": [
+  {
+   "name": "gpu-01",
+   "groups": [
+    "gpu"
+   ],
+   "rows": [
+    {
+     "at": "2026-10-28T00:00:00.000Z",
+     "state": "ok",
+     "diskPct": {
+      "/": 94.5,
+      "/data": 74
+     },
+     "memAvailPct": 11,
+     "findings": []
+    },
+    {
+     "at": "2026-10-29T00:00:00.000Z",
+     "state": "unreachable",
+     "status": "timeout",
+     "diskPct": {},
+     "findings": []
+    },
+    {
+     "at": "2026-10-29T00:00:00.000Z",
+     "state": "crit",
+     "diskPct": {
+      "/": 95,
+      "/data": 80
+     },
+     "memAvailPct": 4,
+     "load1": 60.1,
+     "cpuPct": 90,
+     "loginMs": 4200,
+     "rxBps": 624288,
+     "txBps": 1124,
+     "tcpEstablished": 42,
+     "tcpRetransPct": 10,
+     "gpuUtilPct": 49,
+     "gpuMemPct": 90.9,
+     "gpuTempC": 87,
+     "sshFailures1h": 240,
+     "findings": [
+      {
+       "severity": "crit",
+       "code": "memory-low",
+       "message": "memory available 4% (10.1G of 252G)"
+      },
+      {
+       "severity": "crit",
+       "code": "service-down",
+       "message": "redis is failed",
+       "subject": "redis"
+      },
+      {
+       "severity": "crit",
+       "code": "service-down",
+       "message": "port 8080 is not listening",
+       "subject": "8080"
+      },
+      {
+       "severity": "crit",
+       "code": "service-down",
+       "message": "https://h/x answered nothing",
+       "subject": "https://h/x"
+      },
+      {
+       "severity": "warn",
+       "code": "disk-forecast",
+       "message": "/ grows 0.5 points a day and fills in about 10 days",
+       "subject": "/"
+      },
+      {
+       "severity": "warn",
+       "code": "disk-high",
+       "message": "/data 80% used (1.3T free of 6.5T)",
+       "subject": "/data"
+      }
+     ]
+    }
+   ],
+   "latest": "crit",
+   "forecast": {
+    "/": 10,
+    "/data": 11.1
+   },
+   "reach": {
+    "day": 50,
+    "week": 80,
+    "loginP95": 4200
+   }
+  },
+  {
+   "name": "none",
+   "groups": [],
+   "rows": [],
+   "latest": "never",
+   "forecast": {},
+   "reach": {}
+  }
+ ],
+ "summary": {
+  "ok": 0,
+  "warn": 0,
+  "crit": 1,
+  "unreachable": 0,
+  "never": 1
+ }
+}

@@ -1,0 +1,184 @@
+{
+ "authLogReadable": true,
+ "fullVisibility": true,
+ "failedBySource": [
+  {
+   "source": "203.0.113.9",
+   "count": 2400
+  },
+  {
+   "source": "198.51.100.7",
+   "count": 150
+  }
+ ],
+ "accepted": [
+  {
+   "method": "publickey",
+   "user": "alice",
+   "source": "10.0.0.5",
+   "count": 3
+  },
+  {
+   "method": "password",
+   "user": "root",
+   "source": "203.0.113.9",
+   "count": 1
+  }
+ ],
+ "currentSessions": [
+  "alice pts/0 2026-10-27 08:00 (10.0.0.5)"
+ ],
+ "listening": [
+  {
+   "proto": "tcp",
+   "local": "0.0.0.0:22",
+   "process": "sshd"
+  }
+ ],
+ "establishedBySource": [
+  {
+   "source": "192.0.2.44",
+   "count": 250
+  }
+ ],
+ "synRecv": 12,
+ "suspiciousOutbound": [
+  {
+   "local": "10.0.0.8:51234",
+   "remote": "198.18.0.10:3333"
+  }
+ ],
+ "miners": [
+  {
+   "pid": 31337,
+   "user": "www-data",
+   "cpuPct": 390,
+   "command": "kdevtmpfsi /tmp/kdevtmpfsi"
+  }
+ ],
+ "badExecutables": [
+  {
+   "pid": 31337,
+   "comm": "kdevtmpfsi",
+   "exe": "/tmp/kdevtmpfsi",
+   "replaced": false
+  },
+  {
+   "pid": 2247,
+   "comm": "node",
+   "exe": "/home/u/.nvm/node (deleted)",
+   "replaced": true
+  },
+  {
+   "pid": 77,
+   "comm": "x",
+   "exe": "/home/u/x (deleted)",
+   "replaced": false
+  },
+  {
+   "pid": 78,
+   "comm": "node",
+   "exe": "/home/u/.nvm/versions/node/v18/bin/node (deleted)",
+   "replaced": false
+  }
+ ],
+ "extraUid0": [
+  "toor"
+ ],
+ "changedKeys": [
+  {
+   "path": "/root/.ssh/authorized_keys",
+   "owner": "root",
+   "modified": "2026-10-26T07:33:20.000Z"
+  }
+ ],
+ "changedCron": [],
+ "changedUnits": [],
+ "sshd": {
+  "permitrootlogin": "yes",
+  "passwordauthentication": "yes"
+ },
+ "fail2ban": [],
+ "findings": [
+  {
+   "severity": "crit",
+   "code": "ssh-bruteforce",
+   "message": "2400 failed SSH logins from 203.0.113.9 in 24h"
+  },
+  {
+   "severity": "warn",
+   "code": "ssh-bruteforce",
+   "message": "150 failed SSH logins from 198.51.100.7 in 24h"
+  },
+  {
+   "severity": "crit",
+   "code": "login-after-bruteforce",
+   "message": "successful password login as root from 203.0.113.9, which also had many failed attempts"
+  },
+  {
+   "severity": "warn",
+   "code": "root-password-login",
+   "message": "root logged in with a password from 203.0.113.9"
+  },
+  {
+   "severity": "info",
+   "code": "public-logins",
+   "message": "logins from public addresses: root@203.0.113.9"
+  },
+  {
+   "severity": "warn",
+   "code": "connection-flood",
+   "message": "250 established connections from 192.0.2.44"
+  },
+  {
+   "severity": "crit",
+   "code": "crypto-miner",
+   "message": "crypto-miner-like process kdevtmpfsi /tmp/kdevtmpfsi [pid 31337, www-data, 390% CPU]"
+  },
+  {
+   "severity": "crit",
+   "code": "suspicious-exe",
+   "message": "process kdevtmpfsi[31337] runs from a world-writable location: /tmp/kdevtmpfsi"
+  },
+  {
+   "severity": "info",
+   "code": "binary-replaced",
+   "message": "process node[2247] still runs a binary replaced since it started (/home/u/.nvm/node (deleted)); usually an upgrade — restart it to pick up the new version"
+  },
+  {
+   "severity": "warn",
+   "code": "deleted-exe",
+   "message": "process x[77] runs a binary that no longer exists on disk (/home/u/x (deleted)); malware often deletes itself after starting"
+  },
+  {
+   "severity": "info",
+   "code": "binary-removed",
+   "message": "process node[78] runs /home/u/.nvm/versions/node/v18/bin/node (deleted), removed by an upgrade or uninstall of a managed tool; restart it if it should keep running"
+  },
+  {
+   "severity": "warn",
+   "code": "suspicious-outbound",
+   "message": "outbound connection 10.0.0.8:51234 → 198.18.0.10:3333 (port often used by miners/C2)"
+  },
+  {
+   "severity": "crit",
+   "code": "extra-uid0",
+   "message": "accounts with UID 0 besides root: toor"
+  },
+  {
+   "severity": "warn",
+   "code": "authorized-keys-changed",
+   "message": "/root/.ssh/authorized_keys changed at 2026-10-26T07:33:20.000Z"
+  },
+  {
+   "severity": "warn",
+   "code": "sshd-weak",
+   "message": "sshd allows root login with passwords (PermitRootLogin yes, PasswordAuthentication yes)"
+  },
+  {
+   "severity": "info",
+   "code": "no-fail2ban",
+   "message": "brute force is ongoing and fail2ban (sshd jail) is not active"
+  }
+ ]
+}

@@ -1,0 +1,224 @@
+[
+ {
+  "at": "2026-10-26T00:00:00.000Z",
+  "diskPct": {
+   "/": 93.5,
+   "/data": 74
+  },
+  "memAvailPct": 13,
+  "listeners": [
+   "*:22",
+   "10.0.0.5:9100"
+  ],
+  "loginSources": [
+   "alice@10.0.0.9"
+  ],
+  "status": "ok",
+  "findings": []
+ },
+ {
+  "at": "2026-10-27T00:00:00.000Z",
+  "diskPct": {
+   "/": 94,
+   "/data": 74
+  },
+  "memAvailPct": 12,
+  "listeners": [
+   "*:22",
+   "10.0.0.5:9100"
+  ],
+  "loginSources": [
+   "alice@10.0.0.9"
+  ],
+  "status": "ok",
+  "findings": []
+ },
+ {
+  "at": "2026-10-28T00:00:00.000Z",
+  "diskPct": {
+   "/": 94.5,
+   "/data": 74
+  },
+  "memAvailPct": 11,
+  "listeners": [
+   "*:22",
+   "10.0.0.5:9100"
+  ],
+  "loginSources": [
+   "alice@10.0.0.9"
+  ],
+  "status": "ok",
+  "findings": []
+ },
+ {
+  "at": "2026-10-29T00:00:00.000Z",
+  "status": "timeout",
+  "diskPct": {},
+  "findings": []
+ },
+ {
+  "gpuUtilPct": 49,
+  "gpuMemPct": 90.9,
+  "gpuTempC": 87,
+  "at": "2026-10-29T00:00:00.000Z",
+  "diskPct": {
+   "/": 95,
+   "/data": 80
+  },
+  "memAvailPct": 4,
+  "load1": 60.1,
+  "cpuPct": 90,
+  "loginMs": 4200,
+  "rxBps": 624288,
+  "txBps": 1124,
+  "tcpEstablished": 42,
+  "tcpRetransPct": 10,
+  "listeners": [
+   "*:22",
+   "*:6379",
+   "*:8888",
+   "10.0.0.5:9100"
+  ],
+  "loginSources": [
+   "alice@10.0.0.9",
+   "root@203.0.113.7"
+  ],
+  "sshFailures1h": 240,
+  "status": "ok",
+  "findings": [
+   {
+    "severity": "crit",
+    "code": "disk-full",
+    "message": "/ 95% used (45.8G free of 916G)",
+    "subject": "/"
+   },
+   {
+    "severity": "crit",
+    "code": "memory-low",
+    "message": "memory available 4% (10.1G of 252G)"
+   },
+   {
+    "severity": "crit",
+    "code": "service-down",
+    "message": "redis is failed",
+    "subject": "redis"
+   },
+   {
+    "severity": "crit",
+    "code": "service-down",
+    "message": "port 8080 is not listening",
+    "subject": "8080"
+   },
+   {
+    "severity": "crit",
+    "code": "service-down",
+    "message": "https://h/x answered nothing",
+    "subject": "https://h/x"
+   },
+   {
+    "severity": "warn",
+    "code": "disk-forecast",
+    "message": "/ grows 0.5 points a day and fills in about 10 days",
+    "subject": "/"
+   },
+   {
+    "severity": "warn",
+    "code": "disk-high",
+    "message": "/data 80% used (1.3T free of 6.5T)",
+    "subject": "/data"
+   },
+   {
+    "severity": "warn",
+    "code": "disk-growth",
+    "message": "/data grew 74% → 80% since 2026-10-28T00:00:00.000Z",
+    "subject": "/data"
+   },
+   {
+    "severity": "warn",
+    "code": "disk-forecast",
+    "message": "/data grows 1.8 points a day and fills in about 11 days",
+    "subject": "/data"
+   },
+   {
+    "severity": "warn",
+    "code": "swap-high",
+    "message": "swap 75% used"
+   },
+   {
+    "severity": "warn",
+    "code": "load-high",
+    "message": "load 60.1/55/40 on 32 cores (1.88 per core)"
+   },
+   {
+    "severity": "warn",
+    "code": "units-failed",
+    "message": "failed systemd units: slurmd.service"
+   },
+   {
+    "severity": "warn",
+    "code": "zombies",
+    "message": "12 zombie processes"
+   },
+   {
+    "severity": "warn",
+    "code": "oom-kills",
+    "message": "2 OOM-killer messages in the last 24h"
+   },
+   {
+    "severity": "warn",
+    "code": "gpu-hot",
+    "message": "GPU 0 at 87°C"
+   },
+   {
+    "severity": "warn",
+    "code": "slurm-nodes",
+    "message": "Slurm nodes need attention: gpu-02 drained (Kill task failed)"
+   },
+   {
+    "severity": "warn",
+    "code": "login-slow",
+    "message": "SSH login took 4.2 s"
+   },
+   {
+    "severity": "warn",
+    "code": "tcp-retrans",
+    "message": "10% of TCP segments were retransmitted during the sample"
+   },
+   {
+    "severity": "warn",
+    "code": "port-new",
+    "message": "new listening TCP ports: *:6379, *:8888"
+   },
+   {
+    "severity": "warn",
+    "code": "login-new-source",
+    "message": "new login sources: root from 203.0.113.7"
+   },
+   {
+    "severity": "warn",
+    "code": "ssh-failures",
+    "message": "240 failed SSH logins in the last hour"
+   },
+   {
+    "severity": "warn",
+    "code": "ntp-unsynced",
+    "message": "system clock is not NTP-synchronized"
+   },
+   {
+    "severity": "info",
+    "code": "kernel-errors",
+    "message": "4 kernel error lines in the last 24h"
+   },
+   {
+    "severity": "info",
+    "code": "gpu-idle-held",
+    "message": "GPU 1 holds 70000/81920 MiB at 0% utilization (pids 5151)"
+   },
+   {
+    "severity": "info",
+    "code": "reboot-required",
+    "message": "a package update requires a reboot"
+   }
+  ]
+ }
+]

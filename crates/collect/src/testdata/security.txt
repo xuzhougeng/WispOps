@@ -1,0 +1,40 @@
+@@whoami
+0
+@@authsrc
+readable
+@@failed
+   2400 203.0.113.9
+    150 198.51.100.7
+@@accepted
+      3 publickey alice 10.0.0.5
+      1 password root 203.0.113.9
+@@who
+alice pts/0 2026-10-27 08:00 (10.0.0.5)
+@@listen
+tcp	0.0.0.0:22	users:(("sshd",pid=900,fd=3))
+@@estab
+    250 192.0.2.44
+@@synrecv
+12
+@@outbound
+10.0.0.8:51234	198.18.0.10:3333
+@@procs
+  31337 www-data 390.0 3600 kdevtmpfsi /tmp/kdevtmpfsi
+  1200 alice 50.0 100 python python train.py
+@@badexe
+31337	kdevtmpfsi	/tmp/kdevtmpfsi	-
+2247	node	/home/u/.nvm/node (deleted)	replaced
+77	x	/home/u/x (deleted)	missing
+78	node	/home/u/.nvm/versions/node/v18/bin/node (deleted)	missing
+@@uid0
+root
+toor
+@@keys
+1793000000	root	/root/.ssh/authorized_keys
+@@cron
+@@units
+@@sshd
+permitrootlogin yes
+passwordauthentication yes
+@@fail2ban
+@@end

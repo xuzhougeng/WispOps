@@ -1,0 +1,40 @@
+{
+ "path": "/",
+ "filesystem": {
+  "filesystem": "/dev/sda2",
+  "type": "ext4",
+  "sizeKb": 1000000000,
+  "usedKb": 850000000,
+  "availKb": 150000000,
+  "usePct": 85,
+  "mount": "/"
+ },
+ "depth": 5,
+ "fullVisibility": false,
+ "walkIncomplete": false,
+ "permissionDenied": true,
+ "dirs": [
+  [
+   "/",
+   314572800
+  ],
+  [
+   "/home",
+   209715200
+  ],
+  [
+   "/home/alice",
+   157286400
+  ],
+  [
+   "/var",
+   62914560
+  ]
+ ],
+ "dirCount": 37,
+ "minKb": 1024,
+ "notes": [
+  "du could not read some directories (not running as root); sizes are lower bounds — enable sudo on the task for full totals",
+  "37 directories are at least 1.0M; only the 4 largest are kept"
+ ]
+}

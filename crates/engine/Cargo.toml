@@ -1,0 +1,29 @@
+[package]
+name = "wisp_ops_engine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = { version = "0.10", features = ["case-insensitive"] }
+iana-time-zone = "0.1"
+chacha20poly1305 = "0.10"
+getrandom = "0.3"
+sha2 = "0.10"
+base64 = "0.22"
+dirs = "7"
+encoding_rs = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

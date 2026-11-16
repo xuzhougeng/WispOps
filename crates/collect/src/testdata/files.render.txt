@@ -1,0 +1,47 @@
+## seq-01: files modified in the last 7 day(s) under /data
+120345 files, 300G (previous scan 2026-10-20T00:00:00.000Z: +50.0G); individually classified files cover 58% of the bytes.
+Note: Job-directory checks cover visible Slurm/PBS/LSF jobs, up to 500 per scheduler. Missing tools, permissions or scheduler failures can hide active jobs; verify with the owner before cleanup.
+
+Where it landed:
+     200G     1000 files  /data/proj/alice  (+50.0G vs previous scan)
+    80.0G   119000 files  /data/proj/bob/work
+
+By owner: alice 200G, bob 100G
+
+By kind (large files):
+    70.0G      2×  BAM alignment — can be compressed/converted
+    60.0G      1×  SAM alignment — can be compressed/converted
+    20.0G      1×  Raw FASTQ — raw data — keep/archive
+    15.0G      1×  Trimmed/filtered FASTQ — regenerable intermediate
+    10.0G      1×  Uncompressed FASTQ — can be compressed/converted
+
+Still in use (excluded from the plan):
+    30.0G  /data/proj/alice/S2.sorted.bam held by samtools[4242 alice]
+
+Pipeline working directories:
+    80.0G  nextflow [complete] /data/proj/bob/work (modified 2026-10-25T07:33:20.000Z)
+     5.0G  snakemake [locked-running] /data/proj/carol/.snakemake (modified 2026-10-26T07:23:20.000Z)
+
+Cleanup suggestions (largest first; nothing has been changed):
+1. nextflow working directory of a complete run: ~80.0G in 1 path(s)
+   why: The run log ends with "Execution complete"; task scratch is only needed to -resume. Use `nextflow clean -f` in the launch directory or remove work/.
+   before acting: Confirm results were published/copied and nobody plans to resume the run.
+   - /data/proj/bob/work
+2. Duplicates superseded by a processed or compressed copy: ~60.0G in 1 path(s)
+   why: a BAM/CRAM of the same sample exists; verify it with `samtools quickcheck` and delete the SAM
+   before acting: For each pair, validate the kept file (`samtools quickcheck`, `gzip -t`, `zstd -t`, or record counts) before deleting the superseded one.
+   - /data/proj/alice/S1.sam
+3. BAM alignment (can be compressed/converted): ~20.0G in 1 path(s)
+   why: Final alignments can be stored as CRAM (`samtools view -C -T ref.fa`, roughly 40–60% smaller) once the reference FASTA is archived with it.
+   before acting: Convert, validate the new file, and only then remove the original.
+   - /data/proj/alice/S1.bam
+4. Trimmed/filtered FASTQ (regenerable intermediate): ~15.0G in 1 path(s)
+   why: Regenerable from raw reads with the logged trimming command. Delete once alignments are final.
+   before acting: Confirm the producing run finished successfully and its outputs were checked; nothing holds these files open.
+   - /data/proj/bob/trimmed/S3_R1_val_1.fq.gz
+5. Uncompressed FASTQ (can be compressed/converted): ~5.0G in 1 path(s)
+   why: Compress (`pigz -p 8` or `zstd -T8`); aligners and most tools read .gz directly. Typically 3–5× smaller.
+   before acting: Convert, validate the new file, and only then remove the original.
+   - /data/proj/bob/S3.fastq
+
+Raw data (Raw FASTQ 20.0G) is never a cleanup candidate; archive it to cold storage if space is tight.

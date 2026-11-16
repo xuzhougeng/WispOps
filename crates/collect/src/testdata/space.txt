@@ -1,0 +1,15 @@
+@@whoami
+1000
+@@df
+Filesystem     Type 1024-blocks      Used Available Capacity Mounted on
+/dev/sda2      ext4   1000000000 850000000 150000000      85% /
+@@du
+314572800	/
+209715200	/home
+157286400	/home/alice
+62914560	/var
+@@du_rc
+1
+@@du_count
+37
+@@end

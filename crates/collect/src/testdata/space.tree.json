@@ -1,0 +1,46 @@
+{
+ "name": "/data",
+ "path": "/data",
+ "kb": 100,
+ "restKb": 20,
+ "children": [
+  {
+   "name": "a",
+   "path": "/data/a",
+   "kb": 60,
+   "restKb": 10,
+   "children": [
+    {
+     "name": "x",
+     "path": "/data/a/x",
+     "kb": 50,
+     "restKb": 50,
+     "children": []
+    }
+   ]
+  },
+  {
+   "name": "b",
+   "path": "/data/b",
+   "kb": 20,
+   "restKb": 0,
+   "children": [
+    {
+     "name": "deep",
+     "path": "/data/b/deep",
+     "kb": 20,
+     "restKb": 0,
+     "children": [
+      {
+       "name": "er",
+       "path": "/data/b/deep/er",
+       "kb": 20,
+       "restKb": 20,
+       "children": []
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

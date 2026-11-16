@@ -1,0 +1,12 @@
+## gpu-01:/ — directory space on / (/dev/sda2) 85% used, 143G free of 954G
+Directories under / total 300G (same filesystem, 5 levels deep).
+Note: du could not read some directories (not running as root); sizes are lower bounds — enable sudo on the task for full totals
+Note: 37 directories are at least 1.0M; only the 4 largest are kept
+
+Largest directories (nested, share of the scanned total):
+     200G   67%  /home  [files directly here 50.0G]  (+40.0G since 2026-10-20T00:00:00.000Z)
+       150G   50%  /home/alice  (+40.0G since 2026-10-20T00:00:00.000Z)
+    60.0G   20%  /var
+    40.0G        files directly in / and smaller directories
+
+Grew most since the previous scan (2026-10-20T00:00:00.000Z): /home/alice +40.0G

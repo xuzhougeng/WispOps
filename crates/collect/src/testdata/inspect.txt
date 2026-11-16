@@ -1,0 +1,88 @@
+Welcome to the cluster! Unauthorized access is prohibited.
+@@kv
+hostname=gpu-01
+kernel=Linux 5.15.0-91-generic
+os=Ubuntu 22.04.3 LTS
+cores=32
+uptime=864000.12
+loadavg=60.10 55.00 40.00 3/1200 4242
+zombies=12
+reboot_required=yes
+ntp=no
+oom_24h=2
+kerr_24h=4
+sshfail_1h=240
+@@meminfo
+MemTotal:       263842256 kB
+MemAvailable:    10553690 kB
+SwapTotal:        8388604 kB
+SwapFree:         2097151 kB
+@@cpu
+cpu  1000 0 1000 8000 0 0 0 0 0 0
+cpu  1900 0 1000 8100 0 0 0 0 0 0
+@@df
+Filesystem     Type 1024-blocks      Used Available Capacity Mounted on
+/dev/nvme0n1p2 ext4   960000000 912000000  48000000      95% /
+/dev/sdb1      xfs   7000000000 5600000000 1400000000    80% /data
+tmpfs          tmpfs   32000000         0  32000000       0% /dev/shm
+@@dfi
+Filesystem       Inodes   IUsed    IFree IUse% Mounted on
+/dev/nvme0n1p2 61054976 1000000 60054976    2% /
+/dev/sdb1             -       -        -     - /data
+@@failed
+slurmd.service
+@@topcpu
+  4242 alice  3190.0 12.5  86400 python
+@@topmem
+  4242 alice  3190.0 12.5  86400 python
+@@gpu
+0, GPU-aaa, NVIDIA A100-SXM4-80GB, 98, 79000, 81920, 87
+1, GPU-bbb, NVIDIA A100-SXM4-80GB, 0, 70000, 81920, 40
+@@gpuapps
+GPU-aaa, 4242, 79000, python
+GPU-bbb, 5151, 70000, jupyter
+@@slurm
+mixed|3
+drained|1
+@@slurmbad
+gpu-02|drained|Kill task failed
+@@squeue
+     12 RUNNING
+      3 PENDING
+@@listen
+0.0.0.0:22
+127.0.0.1:631
+[::]:22
+[::1]:631
+*:8888
+10.0.0.5%eth0:9100
+127.0.0.53%lo:53
+:::6379
+@@logins
+alice 10.0.0.9
+root 203.0.113.7
+@@kerr
+Oct 26 10:00:00 gpu-01 kernel: NVRM: Xid 79
+@@netdev
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:    5000      50    0    0    0     0          0         0     5000      50    0    0    0     0       0          0
+  eth0: 1000000     900    0    0    0     0          0         0  2000000     800    0    0    0     0       0          0
+  eth1:9000000      900    0    0    0     0          0         0      100     800    0    0    0     0       0          0
+docker0:    100       1    0    0    0     0          0         0      100       1    0    0    0     0       0          0
+--
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:    9000      90    0    0    0     0          0         0     9000      90    0    0    0     0       0          0
+  eth0: 1524288     950    0    0    0     0          0         0  2001024     810    0    0    0     0       0          0
+  eth1:9100000      950    0    0    0     0          0         0      200     810    0    0    0     0       0          0
+docker0: 5000100     99    0    0    0     0          0         0  5000100      99    0    0    0     0       0          0
+@@netphys
+/sys/class/net/eth0
+/sys/class/net/eth1
+@@tcp
+Tcp: RtoAlgorithm RtoMin RtoMax MaxConn ActiveOpens PassiveOpens AttemptFails EstabResets CurrEstab InSegs OutSegs RetransSegs InErrs OutRsts InCsumErrors
+Tcp: 1 200 120000 -1 100 200 0 0 40 10000 20000 100 0 0 0
+Tcp: RtoAlgorithm RtoMin RtoMax MaxConn ActiveOpens PassiveOpens AttemptFails EstabResets CurrEstab InSegs OutSegs RetransSegs InErrs OutRsts InCsumErrors
+Tcp: 1 200 120000 -1 100 200 0 0 42 10300 20400 140 0 0 0
+@@end

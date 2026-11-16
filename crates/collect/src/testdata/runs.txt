@@ -1,0 +1,16 @@
+4 host(s): 2 ok, 1 sudo-required, 1 timeout
+
+### a, b — ok exit 0, 1.2s
+hello
+world
+
+### c — sudo-required exit 1, 0.3s
+[stderr]
+sudo: a password is 
+… [8 more characters]
+Hint: sudo needs a password on this host. Configure sudoSecret to a Password Store entry, a NOPASSWD rule, or ask the user to run it.
+
+### d — timeout, 60.0s
+xxxxxxxxxxxxxxxxxxxx
+… [30 more characters]
+Hint: the local ssh was stopped; the remote command may still be running. Check before retrying.

@@ -1,0 +1,15 @@
+[package]
+name = "wisp_ops_net"
+version = "0.1.0"
+edition = "2024"
+description = "WispOps's HTTP: the streamed chat request. Blocking, on ureq."
+license = "MIT"
+
+[dependencies]
+wisp_ops_core = { path = "../core" }
+serde_json = "1"
+ureq = { version = "3", features = ["json", "socks-proxy"] }
+async-channel = "2"
+
+[lints]
+workspace = true

@@ -1,0 +1,10 @@
+Backup existing regular files: /etc/app/config with spaces, /etc/it's.conf
+New files (must not exist; deleted on failure): /etc/app/new.conf
+Backup directories as tar (replaced on failure): /etc/nginx/conf.d, /srv
+Apply:
+printf 'x' > /etc/app/new.conf; systemctl reload app
+Verify:
+test -s /etc/app/new.conf
+On failure: restore every backup, then run:
+systemctl reload app
+Reason: golden

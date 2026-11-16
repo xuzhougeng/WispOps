@@ -1,0 +1,270 @@
+{
+ "report": {
+  "roots": [
+   "/data"
+  ],
+  "days": 7,
+  "totalBytes": 322122547200,
+  "totalFiles": 120345,
+  "classifiedShare": 0.5833333333333334,
+  "incompleteRoots": [],
+  "fullVisibility": true,
+  "dirs": [
+   {
+    "path": "/data/proj/alice",
+    "bytes": 214748364800,
+    "files": 1000,
+    "deltaBytes": 53687091200
+   },
+   {
+    "path": "/data/proj/bob/work",
+    "bytes": 85899345920,
+    "files": 119000
+   }
+  ],
+  "users": [
+   {
+    "user": "alice",
+    "bytes": 214748364800,
+    "files": 1000
+   },
+   {
+    "user": "bob",
+    "bytes": 107374182400,
+    "files": 119345
+   }
+  ],
+  "byKind": [
+   {
+    "kind": {
+     "id": "bam",
+     "label": "BAM alignment",
+     "retention": "reducible",
+     "advice": "Final alignments can be stored as CRAM (`samtools view -C -T ref.fa`, roughly 40–60% smaller) once the reference FASTA is archived with it."
+    },
+    "bytes": 75161927680,
+    "files": 2
+   },
+   {
+    "kind": {
+     "id": "sam",
+     "label": "SAM alignment",
+     "retention": "reducible",
+     "advice": "Uncompressed alignments. Convert to sorted BAM/CRAM (`samtools sort -@8 -o x.bam x.sam && samtools quickcheck x.bam`), then delete the SAM."
+    },
+    "bytes": 64424509440,
+    "files": 1
+   },
+   {
+    "kind": {
+     "id": "fastq",
+     "label": "Raw FASTQ",
+     "retention": "raw",
+     "advice": "Raw reads: keep, and archive a verified copy (md5sum) to cold storage."
+    },
+    "bytes": 21474836480,
+    "files": 1
+   },
+   {
+    "kind": {
+     "id": "fastq-trimmed",
+     "label": "Trimmed/filtered FASTQ",
+     "retention": "intermediate",
+     "advice": "Regenerable from raw reads with the logged trimming command. Delete once alignments are final."
+    },
+    "bytes": 16106127360,
+    "files": 1
+   },
+   {
+    "kind": {
+     "id": "fastq-plain",
+     "label": "Uncompressed FASTQ",
+     "retention": "reducible",
+     "advice": "Compress (`pigz -p 8` or `zstd -T8`); aligners and most tools read .gz directly. Typically 3–5× smaller."
+    },
+    "bytes": 10737418240,
+    "files": 1
+   }
+  ],
+  "files": [
+   {
+    "path": "/data/proj/alice/S1.sam",
+    "bytes": 64424509440,
+    "modified": "2026-10-26T06:33:20.000Z",
+    "owner": "alice",
+    "kind": {
+     "id": "sam",
+     "label": "SAM alignment",
+     "retention": "reducible",
+     "advice": "Uncompressed alignments. Convert to sorted BAM/CRAM (`samtools sort -@8 -o x.bam x.sam && samtools quickcheck x.bam`), then delete the SAM."
+    },
+    "holders": [],
+    "redundantWith": {
+     "path": "/data/proj/alice/S1.sam",
+     "supersededBy": "/data/proj/alice/S1.bam",
+     "reason": "a BAM/CRAM of the same sample exists; verify it with `samtools quickcheck` and delete the SAM"
+    }
+   },
+   {
+    "path": "/data/proj/alice/S1.bam",
+    "bytes": 42949672960,
+    "modified": "2026-10-26T06:35:00.000Z",
+    "owner": "alice",
+    "kind": {
+     "id": "bam",
+     "label": "BAM alignment",
+     "retention": "reducible",
+     "advice": "Final alignments can be stored as CRAM (`samtools view -C -T ref.fa`, roughly 40–60% smaller) once the reference FASTA is archived with it."
+    },
+    "holders": []
+   },
+   {
+    "path": "/data/proj/alice/S2.sorted.bam",
+    "bytes": 32212254720,
+    "modified": "2026-10-26T07:31:40.000Z",
+    "owner": "alice",
+    "kind": {
+     "id": "bam",
+     "label": "BAM alignment",
+     "retention": "reducible",
+     "advice": "Final alignments can be stored as CRAM (`samtools view -C -T ref.fa`, roughly 40–60% smaller) once the reference FASTA is archived with it."
+    },
+    "holders": [
+     {
+      "pid": 4242,
+      "user": "alice",
+      "elapsedSec": 600,
+      "command": "samtools"
+     }
+    ]
+   },
+   {
+    "path": "/data/proj/alice/raw/S2_R1.fastq.gz",
+    "bytes": 21474836480,
+    "modified": "2026-10-26T07:32:30.000Z",
+    "owner": "alice",
+    "kind": {
+     "id": "fastq",
+     "label": "Raw FASTQ",
+     "retention": "raw",
+     "advice": "Raw reads: keep, and archive a verified copy (md5sum) to cold storage."
+    },
+    "holders": []
+   },
+   {
+    "path": "/data/proj/bob/trimmed/S3_R1_val_1.fq.gz",
+    "bytes": 16106127360,
+    "modified": "2026-10-26T05:33:20.000Z",
+    "owner": "bob",
+    "kind": {
+     "id": "fastq-trimmed",
+     "label": "Trimmed/filtered FASTQ",
+     "retention": "intermediate",
+     "advice": "Regenerable from raw reads with the logged trimming command. Delete once alignments are final."
+    },
+    "holders": []
+   },
+   {
+    "path": "/data/proj/bob/S3.fastq",
+    "bytes": 10737418240,
+    "modified": "2026-10-26T05:33:20.000Z",
+    "owner": "bob",
+    "kind": {
+     "id": "fastq-plain",
+     "label": "Uncompressed FASTQ",
+     "retention": "reducible",
+     "advice": "Compress (`pigz -p 8` or `zstd -T8`); aligners and most tools read .gz directly. Typically 3–5× smaller."
+    },
+    "holders": []
+   }
+  ],
+  "pipelines": [
+   {
+    "path": "/data/proj/bob/work",
+    "kb": 83886080,
+    "modified": "2026-10-25T07:33:20.000Z",
+    "state": "complete",
+    "kind": "nextflow"
+   },
+   {
+    "path": "/data/proj/carol/.snakemake",
+    "kb": 5242880,
+    "modified": "2026-10-26T07:23:20.000Z",
+    "state": "locked-running",
+    "kind": "snakemake"
+   }
+  ],
+  "plan": [
+   {
+    "title": "nextflow working directory of a complete run",
+    "reclaimBytes": 85899345920,
+    "paths": [
+     "/data/proj/bob/work"
+    ],
+    "why": "The run log ends with \"Execution complete\"; task scratch is only needed to -resume. Use `nextflow clean -f` in the launch directory or remove work/.",
+    "verify": "Confirm results were published/copied and nobody plans to resume the run.",
+    "retention": "intermediate"
+   },
+   {
+    "title": "Duplicates superseded by a processed or compressed copy",
+    "reclaimBytes": 64424509440,
+    "paths": [
+     "/data/proj/alice/S1.sam"
+    ],
+    "why": "a BAM/CRAM of the same sample exists; verify it with `samtools quickcheck` and delete the SAM",
+    "verify": "For each pair, validate the kept file (`samtools quickcheck`, `gzip -t`, `zstd -t`, or record counts) before deleting the superseded one.",
+    "retention": "intermediate"
+   },
+   {
+    "title": "BAM alignment (can be compressed/converted)",
+    "reclaimBytes": 21474836480,
+    "paths": [
+     "/data/proj/alice/S1.bam"
+    ],
+    "why": "Final alignments can be stored as CRAM (`samtools view -C -T ref.fa`, roughly 40–60% smaller) once the reference FASTA is archived with it.",
+    "verify": "Convert, validate the new file, and only then remove the original.",
+    "retention": "reducible"
+   },
+   {
+    "title": "Trimmed/filtered FASTQ (regenerable intermediate)",
+    "reclaimBytes": 16106127360,
+    "paths": [
+     "/data/proj/bob/trimmed/S3_R1_val_1.fq.gz"
+    ],
+    "why": "Regenerable from raw reads with the logged trimming command. Delete once alignments are final.",
+    "verify": "Confirm the producing run finished successfully and its outputs were checked; nothing holds these files open.",
+    "retention": "intermediate"
+   },
+   {
+    "title": "Uncompressed FASTQ (can be compressed/converted)",
+    "reclaimBytes": 5368709120,
+    "paths": [
+     "/data/proj/bob/S3.fastq"
+    ],
+    "why": "Compress (`pigz -p 8` or `zstd -T8`); aligners and most tools read .gz directly. Typically 3–5× smaller.",
+    "verify": "Convert, validate the new file, and only then remove the original.",
+    "retention": "reducible"
+   }
+  ],
+  "sincePrevious": {
+   "at": "2026-10-20T00:00:00.000Z",
+   "deltaBytes": 53687091200
+  },
+  "notes": [
+   "Job-directory checks cover visible Slurm/PBS/LSF jobs, up to 500 per scheduler. Missing tools, permissions or scheduler failures can hide active jobs; verify with the owner before cleanup."
+  ]
+ },
+ "snapshot": {
+  "at": "2026-10-29T00:00:00.000Z",
+  "roots": [
+   "/data"
+  ],
+  "days": 7,
+  "totalBytes": 322122547200,
+  "totalFiles": 120345,
+  "dirs": {
+   "/data/proj/alice": 214748364800,
+   "/data/proj/bob/work": 85899345920
+  }
+ }
+}

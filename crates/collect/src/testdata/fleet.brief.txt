@@ -1,0 +1,27 @@
+Fleet inspection 2026-10-29T00:00:00.000Z: 3 hosts — 1 critical, 0 warning, 1 unreachable, 1 healthy
+- gpu-01 [CRIT] load 60.1/32c, cpu 90%, mem avail 4%, disk max 95%, gpu 98%/0%, slurm 3 mixed, 1 drained, login 4200 ms, 240 failed ssh logins/h, net rx 610K/s tx 1K/s, 42 tcp (10% retrans)
+    crit: / 95% used (45.8G free of 916G)
+    crit: memory available 4% (10.1G of 252G) (muted by the owner as known)
+    crit: redis is failed
+    crit: port 8080 is not listening
+    crit: https://h/x answered nothing
+    warn: / grows 0.5 points a day and fills in about 10 days
+    warn: /data 80% used (1.3T free of 6.5T)
+    warn: /data grew 74% → 80% since 2026-10-28T00:00:00.000Z
+    warn: /data grows 1.8 points a day and fills in about 11 days
+    warn: swap 75% used
+    warn: load 60.1/55/40 on 32 cores (1.88 per core)
+    warn: failed systemd units: slurmd.service
+    warn: 12 zombie processes
+    warn: 2 OOM-killer messages in the last 24h
+    warn: GPU 0 at 87°C
+    warn: Slurm nodes need attention: gpu-02 drained (Kill task failed)
+    warn: SSH login took 4.2 s
+    warn: 10% of TCP segments were retransmitted during the sample
+    warn: new listening TCP ports: *:6379, *:8888
+    warn: new login sources: root from 203.0.113.7
+    warn: 240 failed SSH logins in the last hour
+    warn: system clock is not NTP-synchronized
+- down-01 [UNREACHABLE] inspection timeout
+    crit: inspection timeout
+- bare [OK] 

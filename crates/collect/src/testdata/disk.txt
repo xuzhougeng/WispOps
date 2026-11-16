@@ -1,0 +1,45 @@
+@@whoami
+0
+@@gnufind
+ok
+@@df
+Filesystem     Type 1024-blocks       Used  Available Capacity Mounted on
+/dev/sdb1      xfs   1000000000  950000000   50000000      95% /data
+@@dfi
+Filesystem     Inodes IUsed IFree IUse% Mounted on
+/dev/sdb1      100    10    90    10% /data
+@@du
+950000000	/data
+600000000	/data/projects
+300000000	/data/projects/alice
+40000000	/data/scratch
+@@du_rc
+0
+@@big
+50000000000	1792999940	alice	/data/projects/alice/train.log
+20000000000	1790408000	bob	/data/projects/bob/model.ckpt
+9000000000	1792740800	root	/data/logs/app.log.1.gz
+3000000000	1792740800	carol	/data/scratch/core.1234
+@@recent
+50000000000	1792999940	alice	/data/projects/alice/train.log
+@@find_rc
+0
+@@now
+1793000000
+@@open
+4242	-	/data/projects/alice/train.log
+777	8000000000	/data/tmp/old.log (deleted)
+@@procs
+ 4242 alice 86400 python
+  777 root 999999 rsyslogd
+@@jobs
+1001|bob|/data/projects/bob
+@@journal
+Archived and active journals take up 3.9G in the file system.
+@@docker
+@@known
+4000000	/	/var/log
+2000000	/data	/data/conda/pkgs
+@@rotated
+1048576	3
+@@end

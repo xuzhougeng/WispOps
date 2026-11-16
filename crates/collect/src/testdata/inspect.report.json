@@ -1,0 +1,188 @@
+{
+ "hostname": "gpu-01",
+ "os": "Ubuntu 22.04.3 LTS",
+ "kernel": "Linux 5.15.0-91-generic",
+ "cores": 32,
+ "uptimeSec": 864000,
+ "load": {
+  "m1": 60.1,
+  "m5": 55,
+  "m15": 40,
+  "perCore": 1.88
+ },
+ "cpuPct": 90,
+ "mem": {
+  "totalKb": 263842256,
+  "availKb": 10553690,
+  "availPct": 4,
+  "swapTotalKb": 8388604,
+  "swapUsedPct": 75
+ },
+ "disks": [
+  {
+   "filesystem": "/dev/nvme0n1p2",
+   "type": "ext4",
+   "sizeKb": 960000000,
+   "usedKb": 912000000,
+   "availKb": 48000000,
+   "usePct": 95,
+   "mount": "/"
+  },
+  {
+   "filesystem": "/dev/sdb1",
+   "type": "xfs",
+   "sizeKb": 7000000000,
+   "usedKb": 5600000000,
+   "availKb": 1400000000,
+   "usePct": 80,
+   "mount": "/data"
+  }
+ ],
+ "inodes": [
+  {
+   "mount": "/",
+   "usePct": 2
+  }
+ ],
+ "failedUnits": [
+  "slurmd.service"
+ ],
+ "topCpu": [
+  {
+   "pid": 4242,
+   "user": "alice",
+   "cpuPct": 3190,
+   "memPct": 12.5,
+   "elapsedSec": 86400,
+   "command": "python"
+  }
+ ],
+ "topMem": [
+  {
+   "pid": 4242,
+   "user": "alice",
+   "cpuPct": 3190,
+   "memPct": 12.5,
+   "elapsedSec": 86400,
+   "command": "python"
+  }
+ ],
+ "gpus": [
+  {
+   "index": 0,
+   "name": "NVIDIA A100-SXM4-80GB",
+   "utilPct": 98,
+   "memUsedMb": 79000,
+   "memTotalMb": 81920,
+   "tempC": 87,
+   "processes": [
+    {
+     "pid": 4242,
+     "memMb": 79000,
+     "name": "python"
+    }
+   ]
+  },
+  {
+   "index": 1,
+   "name": "NVIDIA A100-SXM4-80GB",
+   "utilPct": 0,
+   "memUsedMb": 70000,
+   "memTotalMb": 81920,
+   "tempC": 40,
+   "processes": [
+    {
+     "pid": 5151,
+     "memMb": 70000,
+     "name": "jupyter"
+    }
+   ]
+  }
+ ],
+ "slurm": {
+  "nodeStates": {
+   "mixed": 3,
+   "drained": 1
+  },
+  "problemNodes": [
+   {
+    "node": "gpu-02",
+    "state": "drained",
+    "reason": "Kill task failed"
+   }
+  ],
+  "jobs": {
+   "RUNNING": 12,
+   "PENDING": 3
+  }
+ },
+ "zombies": 12,
+ "oom24h": 2,
+ "kernelErrors24h": 4,
+ "kernelErrorSamples": [
+  "Oct 26 10:00:00 gpu-01 kernel: NVRM: Xid 79"
+ ],
+ "rebootRequired": true,
+ "ntpSynced": false,
+ "net": {
+  "rxBps": 624288,
+  "txBps": 1124,
+  "interfaces": [
+   {
+    "name": "docker0",
+    "rxBps": 5000000,
+    "txBps": 5000000
+   },
+   {
+    "name": "eth0",
+    "rxBps": 524288,
+    "txBps": 1024
+   },
+   {
+    "name": "eth1",
+    "rxBps": 100000,
+    "txBps": 100
+   }
+  ],
+  "tcpEstablished": 42,
+  "tcpRetransPct": 10
+ },
+ "listeners": [
+  "*:22",
+  "*:6379",
+  "*:8888",
+  "10.0.0.5:9100"
+ ],
+ "loginSources": [
+  "alice@10.0.0.9",
+  "root@203.0.113.7"
+ ],
+ "sshFailures1h": 240,
+ "services": [
+  {
+   "kind": "unit",
+   "target": "redis",
+   "result": "failed",
+   "ok": false
+  },
+  {
+   "kind": "port",
+   "target": "8080",
+   "result": "closed",
+   "ok": false
+  },
+  {
+   "kind": "http",
+   "target": "https://h/x",
+   "result": "000",
+   "ok": false
+  },
+  {
+   "kind": "http",
+   "target": "https://h/ok",
+   "result": "204",
+   "ok": true
+  }
+ ],
+ "loginMs": 4200
+}

@@ -1,0 +1,373 @@
+{
+ "at": "2026-10-29T00:00:00.000Z",
+ "hosts": [
+  {
+   "host": "gpu-01",
+   "status": "ok",
+   "severity": "crit",
+   "findings": [
+    {
+     "severity": "crit",
+     "code": "disk-full",
+     "message": "/ 95% used (45.8G free of 916G)",
+     "subject": "/"
+    },
+    {
+     "severity": "crit",
+     "code": "memory-low",
+     "message": "memory available 4% (10.1G of 252G)",
+     "muted": true
+    },
+    {
+     "severity": "crit",
+     "code": "service-down",
+     "message": "redis is failed",
+     "subject": "redis"
+    },
+    {
+     "severity": "crit",
+     "code": "service-down",
+     "message": "port 8080 is not listening",
+     "subject": "8080"
+    },
+    {
+     "severity": "crit",
+     "code": "service-down",
+     "message": "https://h/x answered nothing",
+     "subject": "https://h/x"
+    },
+    {
+     "severity": "warn",
+     "code": "disk-forecast",
+     "message": "/ grows 0.5 points a day and fills in about 10 days",
+     "subject": "/"
+    },
+    {
+     "severity": "warn",
+     "code": "disk-high",
+     "message": "/data 80% used (1.3T free of 6.5T)",
+     "subject": "/data"
+    },
+    {
+     "severity": "warn",
+     "code": "disk-growth",
+     "message": "/data grew 74% → 80% since 2026-10-28T00:00:00.000Z",
+     "subject": "/data"
+    },
+    {
+     "severity": "warn",
+     "code": "disk-forecast",
+     "message": "/data grows 1.8 points a day and fills in about 11 days",
+     "subject": "/data"
+    },
+    {
+     "severity": "warn",
+     "code": "swap-high",
+     "message": "swap 75% used"
+    },
+    {
+     "severity": "warn",
+     "code": "load-high",
+     "message": "load 60.1/55/40 on 32 cores (1.88 per core)"
+    },
+    {
+     "severity": "warn",
+     "code": "units-failed",
+     "message": "failed systemd units: slurmd.service"
+    },
+    {
+     "severity": "warn",
+     "code": "zombies",
+     "message": "12 zombie processes"
+    },
+    {
+     "severity": "warn",
+     "code": "oom-kills",
+     "message": "2 OOM-killer messages in the last 24h"
+    },
+    {
+     "severity": "warn",
+     "code": "gpu-hot",
+     "message": "GPU 0 at 87°C"
+    },
+    {
+     "severity": "warn",
+     "code": "slurm-nodes",
+     "message": "Slurm nodes need attention: gpu-02 drained (Kill task failed)"
+    },
+    {
+     "severity": "warn",
+     "code": "login-slow",
+     "message": "SSH login took 4.2 s"
+    },
+    {
+     "severity": "warn",
+     "code": "tcp-retrans",
+     "message": "10% of TCP segments were retransmitted during the sample"
+    },
+    {
+     "severity": "warn",
+     "code": "port-new",
+     "message": "new listening TCP ports: *:6379, *:8888"
+    },
+    {
+     "severity": "warn",
+     "code": "login-new-source",
+     "message": "new login sources: root from 203.0.113.7"
+    },
+    {
+     "severity": "warn",
+     "code": "ssh-failures",
+     "message": "240 failed SSH logins in the last hour"
+    },
+    {
+     "severity": "warn",
+     "code": "ntp-unsynced",
+     "message": "system clock is not NTP-synchronized"
+    },
+    {
+     "severity": "info",
+     "code": "kernel-errors",
+     "message": "4 kernel error lines in the last 24h"
+    },
+    {
+     "severity": "info",
+     "code": "gpu-idle-held",
+     "message": "GPU 1 holds 70000/81920 MiB at 0% utilization (pids 5151)"
+    },
+    {
+     "severity": "info",
+     "code": "reboot-required",
+     "message": "a package update requires a reboot"
+    }
+   ],
+   "report": {
+    "hostname": "gpu-01",
+    "os": "Ubuntu 22.04.3 LTS",
+    "kernel": "Linux 5.15.0-91-generic",
+    "cores": 32,
+    "uptimeSec": 864000,
+    "load": {
+     "m1": 60.1,
+     "m5": 55,
+     "m15": 40,
+     "perCore": 1.88
+    },
+    "cpuPct": 90,
+    "mem": {
+     "totalKb": 263842256,
+     "availKb": 10553690,
+     "availPct": 4,
+     "swapTotalKb": 8388604,
+     "swapUsedPct": 75
+    },
+    "disks": [
+     {
+      "filesystem": "/dev/nvme0n1p2",
+      "type": "ext4",
+      "sizeKb": 960000000,
+      "usedKb": 912000000,
+      "availKb": 48000000,
+      "usePct": 95,
+      "mount": "/"
+     },
+     {
+      "filesystem": "/dev/sdb1",
+      "type": "xfs",
+      "sizeKb": 7000000000,
+      "usedKb": 5600000000,
+      "availKb": 1400000000,
+      "usePct": 80,
+      "mount": "/data"
+     }
+    ],
+    "inodes": [
+     {
+      "mount": "/",
+      "usePct": 2
+     }
+    ],
+    "failedUnits": [
+     "slurmd.service"
+    ],
+    "topCpu": [
+     {
+      "pid": 4242,
+      "user": "alice",
+      "cpuPct": 3190,
+      "memPct": 12.5,
+      "elapsedSec": 86400,
+      "command": "python"
+     }
+    ],
+    "topMem": [
+     {
+      "pid": 4242,
+      "user": "alice",
+      "cpuPct": 3190,
+      "memPct": 12.5,
+      "elapsedSec": 86400,
+      "command": "python"
+     }
+    ],
+    "gpus": [
+     {
+      "index": 0,
+      "name": "NVIDIA A100-SXM4-80GB",
+      "utilPct": 98,
+      "memUsedMb": 79000,
+      "memTotalMb": 81920,
+      "tempC": 87,
+      "processes": [
+       {
+        "pid": 4242,
+        "memMb": 79000,
+        "name": "python"
+       }
+      ]
+     },
+     {
+      "index": 1,
+      "name": "NVIDIA A100-SXM4-80GB",
+      "utilPct": 0,
+      "memUsedMb": 70000,
+      "memTotalMb": 81920,
+      "tempC": 40,
+      "processes": [
+       {
+        "pid": 5151,
+        "memMb": 70000,
+        "name": "jupyter"
+       }
+      ]
+     }
+    ],
+    "slurm": {
+     "nodeStates": {
+      "mixed": 3,
+      "drained": 1
+     },
+     "problemNodes": [
+      {
+       "node": "gpu-02",
+       "state": "drained",
+       "reason": "Kill task failed"
+      }
+     ],
+     "jobs": {
+      "RUNNING": 12,
+      "PENDING": 3
+     }
+    },
+    "zombies": 12,
+    "oom24h": 2,
+    "kernelErrors24h": 4,
+    "kernelErrorSamples": [
+     "Oct 26 10:00:00 gpu-01 kernel: NVRM: Xid 79"
+    ],
+    "rebootRequired": true,
+    "ntpSynced": false,
+    "net": {
+     "rxBps": 624288,
+     "txBps": 1124,
+     "interfaces": [
+      {
+       "name": "docker0",
+       "rxBps": 5000000,
+       "txBps": 5000000
+      },
+      {
+       "name": "eth0",
+       "rxBps": 524288,
+       "txBps": 1024
+      },
+      {
+       "name": "eth1",
+       "rxBps": 100000,
+       "txBps": 100
+      }
+     ],
+     "tcpEstablished": 42,
+     "tcpRetransPct": 10
+    },
+    "listeners": [
+     "*:22",
+     "*:6379",
+     "*:8888",
+     "10.0.0.5:9100"
+    ],
+    "loginSources": [
+     "alice@10.0.0.9",
+     "root@203.0.113.7"
+    ],
+    "sshFailures1h": 240,
+    "services": [
+     {
+      "kind": "unit",
+      "target": "redis",
+      "result": "failed",
+      "ok": false
+     },
+     {
+      "kind": "port",
+      "target": "8080",
+      "result": "closed",
+      "ok": false
+     },
+     {
+      "kind": "http",
+      "target": "https://h/x",
+      "result": "000",
+      "ok": false
+     },
+     {
+      "kind": "http",
+      "target": "https://h/ok",
+      "result": "204",
+      "ok": true
+     }
+    ],
+    "loginMs": 4200
+   },
+   "durationMs": 1500
+  },
+  {
+   "host": "down-01",
+   "status": "timeout",
+   "severity": "unreachable",
+   "findings": [
+    {
+     "severity": "crit",
+     "code": "timeout",
+     "message": "inspection timeout"
+    }
+   ],
+   "error": "inspection timeout",
+   "durationMs": 9
+  },
+  {
+   "host": "bare",
+   "status": "ok",
+   "severity": "ok",
+   "findings": [],
+   "report": {
+    "hostname": "x",
+    "disks": [],
+    "inodes": [],
+    "failedUnits": [],
+    "topCpu": [],
+    "topMem": [],
+    "gpus": [],
+    "kernelErrorSamples": []
+   },
+   "durationMs": 3
+  }
+ ],
+ "counts": {
+  "ok": 1,
+  "info": 0,
+  "warn": 0,
+  "crit": 1,
+  "unreachable": 1
+ }
+}

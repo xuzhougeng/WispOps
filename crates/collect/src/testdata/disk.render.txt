@@ -1,0 +1,28 @@
+## nas-01:/data — /data (/dev/sdb1) 95% used, 47.7G free of 954G, inodes 10%
+Since previous diagnosis (2026-10-20T00:00:00.000Z): used +47.7G (90% → 95%)
+Note: Job-directory checks cover visible Slurm/PBS/LSF jobs, up to 500 per scheduler. Missing tools, permissions or scheduler failures can hide active jobs; verify with the owner before cleanup.
+
+Largest directories:
+     572G  /data/projects  (+47.7G since previous)
+     286G  /data/projects/alice
+    38.1G  /data/scratch
+
+Growth since previous diagnosis: /data/projects +47.7G
+
+Large files modified recently (growth suspects):
+    46.6G  /data/projects/alice/train.log  [alice, modified 2026-10-26T07:32:20.000Z] — IN USE — do not delete; truncate or rotate only after checking the holder (held by python[4242 alice])
+
+Largest files:
+    46.6G  /data/projects/alice/train.log  [alice, modified 2026-10-26T07:32:20.000Z] — IN USE — do not delete; truncate or rotate only after checking the holder (held by python[4242 alice])
+    18.6G  /data/projects/bob/model.ckpt  [bob, modified 2026-09-26T07:33:20.000Z] — inside a running Slurm job directory — ask the job owner (job 1001 of bob)
+     8.4G  /data/logs/app.log.1.gz  [root, modified 2026-10-23T07:33:20.000Z] — rotated log — usually safe to remove
+     2.8G  /data/scratch/core.1234  [carol, modified 2026-10-23T07:33:20.000Z] — core dump — inspect, then usually safe to remove
+
+Deleted but still open: 7.5G is pinned by processes; deleting more files will not free it. Restart/reload the holder, or truncate through /proc/<pid>/fd after confirming:
+     7.5G  /data/tmp/old.log  held by rsyslogd[777 root]
+
+Common reclaimable locations:
+     3.8G  /var/log (on /) — logs: check rotation (logrotate), compress or remove rotated *.gz files
+     1.9G  /data/conda/pkgs — conda package cache: `conda clean --all` as the owning user
+Rotated logs under /var/log: 3 files, 1.0M
+Journal: Archived and active journals take up 3.9G in the file system.

@@ -1,0 +1,8 @@
+sh -c 'IFS= read -r p; printf "%s\n" "$p" | sudo -S -p "" -v 2>/dev/null; s=$?; unset p; [ "$s" -eq 0 ] || exit 97; sudo -n -- sh -s; s=$?; exit "$s"'
+---
+sh -c 'IFS= read -r p; printf "%s\n" "$p" | sudo -S -p "" -v -u postgres 2>/dev/null; s=$?; unset p; [ "$s" -eq 0 ] || exit 97; sudo -n -u postgres -- sh -s; s=$?; exit "$s"'
+---
+__wisp_path=$( { [ -r /etc/profile ] && . /etc/profile; [ -r "$HOME/.profile" ] && . "$HOME/.profile"; } >/dev/null 2>&1 </dev/null; printf '%s' "$PATH")
+[ -n "$__wisp_path" ] && PATH="$__wisp_path"; unset __wisp_path
+PATH="$PATH:/usr/local/sbin:/opt/slurm/bin"
+export PATH

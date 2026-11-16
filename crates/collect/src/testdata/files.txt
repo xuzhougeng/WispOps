@@ -1,0 +1,32 @@
+@@whoami
+0
+@@gnufind
+ok
+@@now
+1793000000
+@@total
+322122547200	120345
+@@rc
+0	/data
+@@dirs
+214748364800	1000	/data/proj/alice
+85899345920	119000	/data/proj/bob/work
+@@users
+214748364800	1000	alice
+107374182400	119345	bob
+@@files
+64424509440	1792996400	alice	/data/proj/alice/S1.sam
+42949672960	1792996500	alice	/data/proj/alice/S1.bam
+32212254720	1792999900	alice	/data/proj/alice/S2.sorted.bam
+21474836480	1792999950	alice	/data/proj/alice/raw/S2_R1.fastq.gz
+16106127360	1792992800	bob	/data/proj/bob/trimmed/S3_R1_val_1.fq.gz
+10737418240	1792992800	bob	/data/proj/bob/S3.fastq
+@@open
+4242	-	/data/proj/alice/S2.sorted.bam
+@@procs
+ 4242 alice 600 samtools
+@@jobs
+@@pipelines
+83886080	1792913600	complete	/data/proj/bob/work
+5242880	1792999400	locked-running	/data/proj/carol/.snakemake
+@@end

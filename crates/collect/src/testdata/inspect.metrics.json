@@ -1,0 +1,29 @@
+{
+ "gpuUtilPct": 49,
+ "gpuMemPct": 90.9,
+ "gpuTempC": 87,
+ "at": "2026-10-29T00:00:00.000Z",
+ "diskPct": {
+  "/": 95,
+  "/data": 80
+ },
+ "memAvailPct": 4,
+ "load1": 60.1,
+ "cpuPct": 90,
+ "loginMs": 4200,
+ "rxBps": 624288,
+ "txBps": 1124,
+ "tcpEstablished": 42,
+ "tcpRetransPct": 10,
+ "listeners": [
+  "*:22",
+  "*:6379",
+  "*:8888",
+  "10.0.0.5:9100"
+ ],
+ "loginSources": [
+  "alice@10.0.0.9",
+  "root@203.0.113.7"
+ ],
+ "sshFailures1h": 240
+}

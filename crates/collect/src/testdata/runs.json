@@ -1,0 +1,38 @@
+[
+ {
+  "host": "a",
+  "status": "ok",
+  "exitCode": 0,
+  "stdout": "hello\nworld\n",
+  "stderr": "",
+  "truncated": false,
+  "durationMs": 1234
+ },
+ {
+  "host": "b",
+  "status": "ok",
+  "exitCode": 0,
+  "stdout": "hello\nworld\n",
+  "stderr": "",
+  "truncated": true,
+  "durationMs": 50
+ },
+ {
+  "host": "c",
+  "status": "sudo-required",
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "sudo: a password is required\n",
+  "truncated": false,
+  "durationMs": 250
+ },
+ {
+  "host": "d",
+  "status": "timeout",
+  "exitCode": null,
+  "stdout": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "stderr": "",
+  "truncated": false,
+  "durationMs": 60000
+ }
+]

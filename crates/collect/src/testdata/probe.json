@@ -1,0 +1,12 @@
+{
+ "at": "1970-01-01T00:00:00.000Z",
+ "os": "Rocky Linux 9",
+ "arch": "x86_64",
+ "cores": 64,
+ "user": "alice",
+ "privilege": "sudo-password",
+ "gpus": 8,
+ "scheduler": "slurm",
+ "docker": "no-permission",
+ "systemd": true
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "name": "gpu-root",
+      "username": "root",
+      "note": "lab GPU servers",
+      "agent": true,
+      "secret": "kQ9RvYHBu+ZEzQMUmBruYB8JWYAxsgVMhTRiX6+GZKfFcZTbjkBD7pAfM90Wzno0/7vPozQDPmhJJih4cn5WiVznXOE="
+    },
+    {
+      "name": "中文 name",
+      "username": "",
+      "note": "",
+      "agent": false,
+      "secret": "CiD2EzAbnUqsM0h0bEGDP9RhQvCaV9X+hlc08q8+bqujt3QW+0G/IT2p+NlRvzY59crll0hu8A=="
+    }
+  ]
+}

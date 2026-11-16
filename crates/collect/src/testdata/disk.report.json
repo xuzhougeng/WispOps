@@ -1,0 +1,154 @@
+{
+ "report": {
+  "path": "/data",
+  "filesystem": {
+   "filesystem": "/dev/sdb1",
+   "type": "xfs",
+   "sizeKb": 1000000000,
+   "usedKb": 950000000,
+   "availKb": 50000000,
+   "usePct": 95,
+   "mount": "/data"
+  },
+  "inodeUsePct": 10,
+  "fullVisibility": true,
+  "walkIncomplete": false,
+  "topDirs": [
+   {
+    "path": "/data/projects",
+    "kb": 600000000,
+    "deltaKb": 50000000
+   },
+   {
+    "path": "/data/projects/alice",
+    "kb": 300000000
+   },
+   {
+    "path": "/data/scratch",
+    "kb": 40000000,
+    "deltaKb": 0
+   }
+  ],
+  "largeFiles": [
+   {
+    "path": "/data/projects/alice/train.log",
+    "bytes": 50000000000,
+    "modified": "2026-10-26T07:32:20.000Z",
+    "owner": "alice",
+    "holders": [
+     {
+      "pid": 4242,
+      "user": "alice",
+      "elapsedSec": 86400,
+      "command": "python"
+     }
+    ],
+    "verdict": "in-use"
+   },
+   {
+    "path": "/data/projects/bob/model.ckpt",
+    "bytes": 20000000000,
+    "modified": "2026-09-26T07:33:20.000Z",
+    "owner": "bob",
+    "holders": [],
+    "job": {
+     "id": "1001",
+     "user": "bob",
+     "workdir": "/data/projects/bob",
+     "scheduler": "slurm"
+    },
+    "verdict": "job-directory"
+   },
+   {
+    "path": "/data/logs/app.log.1.gz",
+    "bytes": 9000000000,
+    "modified": "2026-10-23T07:33:20.000Z",
+    "owner": "root",
+    "holders": [],
+    "verdict": "rotated-log"
+   },
+   {
+    "path": "/data/scratch/core.1234",
+    "bytes": 3000000000,
+    "modified": "2026-10-23T07:33:20.000Z",
+    "owner": "carol",
+    "holders": [],
+    "verdict": "core-dump"
+   }
+  ],
+  "recentFiles": [
+   {
+    "path": "/data/projects/alice/train.log",
+    "bytes": 50000000000,
+    "modified": "2026-10-26T07:32:20.000Z",
+    "owner": "alice",
+    "holders": [
+     {
+      "pid": 4242,
+      "user": "alice",
+      "elapsedSec": 86400,
+      "command": "python"
+     }
+    ],
+    "verdict": "in-use"
+   }
+  ],
+  "deletedOpen": [
+   {
+    "pid": 777,
+    "bytes": 8000000000,
+    "path": "/data/tmp/old.log",
+    "holder": {
+     "pid": 777,
+     "user": "root",
+     "elapsedSec": 999999,
+     "command": "rsyslogd"
+    }
+   }
+  ],
+  "deletedOpenBytes": 8000000000,
+  "journal": "Archived and active journals take up 3.9G in the file system.",
+  "docker": [],
+  "knownDirs": [
+   {
+    "path": "/var/log",
+    "kb": 4000000,
+    "mount": "/",
+    "sameFilesystem": false,
+    "hint": "logs: check rotation (logrotate), compress or remove rotated *.gz files"
+   },
+   {
+    "path": "/data/conda/pkgs",
+    "kb": 2000000,
+    "mount": "/data",
+    "sameFilesystem": true,
+    "hint": "conda package cache: `conda clean --all` as the owning user"
+   }
+  ],
+  "rotatedLogs": {
+   "bytes": 1048576,
+   "count": 3
+  },
+  "sincePrevious": {
+   "at": "2026-10-20T00:00:00.000Z",
+   "usedDeltaKb": 50000000,
+   "usePctBefore": 90
+  },
+  "notes": [
+   "Job-directory checks cover visible Slurm/PBS/LSF jobs, up to 500 per scheduler. Missing tools, permissions or scheduler failures can hide active jobs; verify with the owner before cleanup."
+  ]
+ },
+ "snapshot": {
+  "at": "2026-10-29T00:00:00.000Z",
+  "path": "/data",
+  "usedKb": 950000000,
+  "availKb": 50000000,
+  "usePct": 95,
+  "dirs": {
+   "/data": 950000000,
+   "/data/projects": 600000000,
+   "/data/projects/alice": 300000000,
+   "/data/scratch": 40000000
+  }
+ }
+}
