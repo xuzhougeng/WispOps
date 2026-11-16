@@ -15,6 +15,8 @@ pub mod fsutil;
 pub mod inventory;
 /// JavaScript-flavoured regular expressions on top of the `regex` crate.
 pub mod jsre;
+/// Outgoing webhook notifications: payloads, signing, send/skip decisions (no network).
+pub mod notify;
 /// Revision-checked atomic JSON state and the application-managed `managed.json`.
 pub mod managed;
 /// Grants, per-host capability decisions and the gate for one planned action.

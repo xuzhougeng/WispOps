@@ -651,6 +651,8 @@ impl Fleet {
         let hosts = self.select(selector)?;
         let collect = Collect { sudo: false, tool: format!("window:{origin}"), session: None, authorization: Authorization::ReadOnly, cancel: None };
         let fleet = self.inspect_hosts(&hosts, &collect, "(built-in read-only inspection)");
+        // The automatic inspection reports state changes to the webhooks, off this thread.
+        if origin == "auto" { crate::notify::after_inspection(self.data_dir(), &fleet) }
         let c = &fleet.counts;
         Ok(tf!("巡检完成：正常 {}，警告 {}，严重 {}，不可达 {}", "Inspected: {} ok, {} warning, {} critical, {} unreachable", c.ok + c.info, c.warn, c.crit, c.unreachable))
     }
@@ -974,7 +976,8 @@ impl Fleet {
                 Some(old) => {
                     if old != spec.name { return Err("任务的标识关联着运行记录，不能修改。".into()) }
                     let slot = state.tasks.iter_mut().find(|task| task.name == old).ok_or("这个任务写在 inventory.yml 里，请在那里修改。")?;
-                    *slot = spec;
+                    // The form has no notification fields: what was written by hand stays.
+                    *slot = TaskSpec { notify: std::mem::take(&mut slot.notify), notify_only_problems: slot.notify_only_problems, notify_on_change: slot.notify_on_change, quiet_hours: slot.quiet_hours.take(), ..spec };
                 }
                 None => {
                     if exists { return Err(format!("已经有一个叫 {} 的任务。", spec.name)) }
@@ -1144,6 +1147,8 @@ impl Fleet {
         let previous: Option<TaskRunRecord> = self.store.read_bounded("tasks", &task.name).ok().and_then(|mut rows: Vec<TaskRunRecord>| rows.pop());
         let record = TaskRunRecord { at: time::to_iso(time::now_ms()), hosts: hosts.iter().map(|host| host.name.clone()).collect(), playbook: task.playbook.as_str().into(), counts, excerpt: body.chars().take(6000).collect() };
         let _ = self.store.append_bounded("tasks", &task.name, &record, 90);
+        // After the run is kept, as in the plugin; the sending never holds up or fails the task.
+        crate::notify::after_task(self, task, &record, previous.as_ref());
         Ok((task_text(task, &record, &body, previous.as_ref()), record))
     }
 

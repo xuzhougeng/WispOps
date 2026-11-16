@@ -19,6 +19,7 @@ mod findings;
 mod input;
 mod longrun;
 mod markdown;
+mod notify;
 mod ops;
 mod overview;
 mod scans;
@@ -30,6 +31,7 @@ mod theme;
 mod tools;
 mod ui;
 mod vault;
+mod webhooks;
 
 use gpui::*;
 

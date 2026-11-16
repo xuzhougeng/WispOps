@@ -53,12 +53,36 @@ pub struct Settings {
     pub disk_scan_minutes: u32,
     /// A user's task counts as long-running after this many hours.
     pub long_job_hours: u32,
+    /// Where state changes and routine-task runs are sent (外部 webhook 通知).
+    pub webhooks: Vec<Webhook>,
+    /// Which routine-task runs are sent: `always`, `problems` or `change` (`WEBHOOK_TASKS`).
+    pub webhook_tasks: String,
 }
+
+/// One outgoing webhook. The URL holds the service's token and `secret` signs or authorizes:
+/// both stay in this file, are sent to that endpoint only, and are never shown to the model.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Webhook {
+    pub name: String,
+    /// `wecom`, `dingtalk`, `feishu` or `webhook`.
+    pub kind: String,
+    pub url: String,
+    /// DingTalk/Feishu signing secret, or a plain webhook's bearer token; empty for none.
+    pub secret: String,
+    /// Servers whose state the automatic inspection found changed.
+    pub inspection: bool,
+    /// Runs of routine tasks.
+    pub tasks: bool,
+}
+
+/// Which routine-task runs a webhook gets.
+pub const WEBHOOK_TASKS: [&str; 3] = ["always", "problems", "change"];
 
 impl Default for Settings {
     fn default() -> Self {
         let providers = provider::DEFAULT_PRESETS.iter().filter_map(|key| provider::preset(key)).map(Provider::from_preset).collect();
-        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24 };
+        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24, webhooks: vec![], webhook_tasks: "problems".into() };
         settings.tidy();
         settings
     }
@@ -176,6 +200,7 @@ impl Settings {
         if !AUTO_INSPECT.contains(&self.auto_inspect_minutes) { self.auto_inspect_minutes = 0 }
         if !DISK_SCAN.contains(&self.disk_scan_minutes) { self.disk_scan_minutes = 1440 }
         if !LONG_JOB_HOURS.contains(&self.long_job_hours) { self.long_job_hours = 24 }
+        if !WEBHOOK_TASKS.contains(&self.webhook_tasks.as_str()) { self.webhook_tasks = "problems".into() }
     }
 
     /// The first of `m1`, `m2`, … no model has yet.
