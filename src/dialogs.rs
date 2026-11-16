@@ -41,6 +41,14 @@ pub struct CredentialForm {
     pub agent: bool,
 }
 
+impl CredentialForm {
+    /// The fields in the order drawn. Taken apart field by field, so a field added is not left out of Tab.
+    pub fn inputs(&self) -> Vec<&Entity<TextInput>> {
+        let CredentialForm { editing: _, name, username, password, note, agent: _ } = self;
+        vec![name, username, password, note]
+    }
+}
+
 /// Linking a credential to a host's SSH login or its sudo.
 pub struct BindForm {
     pub host: String,
@@ -50,6 +58,8 @@ pub struct BindForm {
     pub testing: bool,
     /// What the test said: the words, and whether it failed.
     pub tested: Option<(String, bool)>,
+    /// A credential being written here, to be stored and linked by 保存; while it is, `picked` is passed over.
+    pub new: Option<CredentialForm>,
 }
 
 /// Hosts of `~/.ssh/config` to take into the inventory.
@@ -93,9 +103,9 @@ impl Modal {
     pub fn inputs(&self) -> Vec<&Entity<TextInput>> {
         match self {
             Modal::Host(HostForm { editing: _, name, address, user, port, groups, jump, identity, description }) => vec![name, groups, address, user, port, jump, identity, description],
-            Modal::Credential(CredentialForm { editing: _, name, username, password, note, agent: _ }) => vec![name, username, password, note],
+            Modal::Credential(form) | Modal::Bind(BindForm { new: Some(form), .. }) => form.inputs(),
             Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, sudo: _ }) => vec![name, description, targets, paths, commands, instruction, daily, every],
-            Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _ }) | Modal::Import(ImportForm { rows: _ }) => vec![],
+            Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _, new: None }) | Modal::Import(ImportForm { rows: _ }) => vec![],
             Modal::Confirm { .. } | Modal::Text { .. } => vec![],
         }
     }
@@ -272,39 +282,14 @@ impl Workspace {
                     false,
                 )
             }
-            Modal::Credential(form) => (
-                if form.editing.is_some() { t("编辑凭据").to_string() } else { t("新建凭据").to_string() },
-                480.,
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .child(field("名称", &form.name, window, cx))
-                    .child(field("用户名（sudo 用另一个账号时填写，否则留空）", &form.username, window, cx))
-                    .child(field(if form.editing.is_some() { "密码（留空保留原密码）" } else { "密码" }, &form.password, window, cx))
-                    .child(field("备注", &form.note, window, cx))
-                    .child(
-                        div()
-                            .id("credential-agent")
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .cursor_pointer()
-                            .on_click(self.on(Cmd::ToggleAgentUse, cx))
-                            .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).rounded(px(4.)).border_1().border_color(if form.agent { Theme::accent() } else { Theme::line_strong() }).when(form.agent, |d| d.bg(Theme::accent()).child(ui::icon("check", 12., Theme::on_accent()))))
-                            .child(t("允许助手和定时任务的命令使用这条凭据")),
-                    )
-                    .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("密码加密保存在本机，只交给 SSH 和 sudo；界面和模型都读不到它。名称、用户名和备注不加密，不要在这些地方写密码。"))),
-                Some(t("保存").to_string()),
-                false,
-            ),
+            Modal::Credential(form) => (if form.editing.is_some() { t("编辑凭据").to_string() } else { t("新建凭据").to_string() }, 480., self.credential_fields(form, window, cx), Some(t("保存").to_string()), false),
             Modal::Bind(form) => {
                 let none = if form.sudo { t("不关联（免密 sudo，或不用 sudo）") } else { t("不关联（用 SSH 密钥登录）") };
-                let row = |key: String, label: String, note: String, this: &Self, cx: &mut Context<Self>| {
-                    let chosen = form.picked == key;
+                let row = |id: String, chosen: bool, label: String, note: String, cmd: Cmd, this: &Self, cx: &mut Context<Self>| {
                     div()
-                        .id(SharedString::from(format!("bind-{key}")))
+                        .id(SharedString::from(format!("bind-{id}")))
                         .flex()
+                        .flex_none()
                         .items_center()
                         .gap(px(10.))
                         .px(px(10.))
@@ -315,15 +300,18 @@ impl Workspace {
                         .when(chosen, |d| d.bg(Theme::accent_soft()))
                         .cursor_pointer()
                         .hover(|s| s.bg(Theme::hover()))
-                        .on_click(this.on(Cmd::PickCredential(key), cx))
+                        .on_click(this.on(cmd, cx))
                         .child(div().flex().flex_none().items_center().justify_center().size(px(14.)).rounded_full().border_1().border_color(if chosen { Theme::accent() } else { Theme::line_strong() }).when(chosen, |d| d.child(div().size(px(8.)).rounded_full().bg(Theme::accent()))))
                         .child(div().flex_1().min_w_0().truncate().child(label))
                         .child(div().flex_none().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(note))
                 };
-                let mut rows = vec![row(String::new(), none.to_string(), String::new(), self, cx)];
-                for credential in &self.view.credentials {
-                    rows.push(row(credential.name.clone(), credential.name.clone(), if credential.agent { credential.username.clone() } else { t("不允许自动化使用").to_string() }, self, cx));
+                let picking = form.new.is_none();
+                let mut rows = vec![row("none".into(), picking && form.picked.is_empty(), none.to_string(), String::new(), Cmd::PickCredential(String::new()), self, cx)];
+                for (n, credential) in self.view.credentials.iter().enumerate() {
+                    rows.push(row(format!("{n}"), picking && form.picked == credential.name, credential.name.clone(), if credential.agent { credential.username.clone() } else { t("不允许自动化使用").to_string() }, Cmd::PickCredential(credential.name.clone()), self, cx));
                 }
+                rows.push(row("new".into(), !picking, t("新建凭据…").to_string(), t("存入密码库并关联").to_string(), Cmd::BindNewCredential, self, cx));
+                let test = ui::secondary_button("bind-test", if form.sudo { t("测试 sudo") } else { t("测试 SSH 登录") }).h(text_px(28.));
                 (
                     if form.sudo { tf!("{} 的 sudo 凭据", "sudo credential of {}", form.host) } else { tf!("{} 的 SSH 登录凭据", "SSH login credential of {}", form.host) },
                     500.,
@@ -332,18 +320,21 @@ impl Workspace {
                         .flex_col()
                         .gap(px(8.))
                         .children(rows)
-                        .when(self.view.credentials.is_empty(), |d| d.child(div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(t("密码库还是空的。先在「密码库」里新建一条凭据。"))))
+                        .when(self.view.credentials.is_empty() && picking, |d| d.child(div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(t("密码库还是空的：选「新建凭据…」在这里写一条。"))))
+                        .when_some(form.new.as_ref(), |d, new| d.child(div().pl(px(24.)).pt(px(4.)).child(self.credential_fields(new, window, cx))))
                         .child(
                             div()
                                 .flex()
                                 .items_center()
                                 .gap(px(10.))
                                 .pt(px(4.))
-                                .child(ui::secondary_button("bind-test", if form.sudo { t("测试 sudo") } else { t("测试 SSH 登录") }).h(text_px(28.)).on_click(self.on(Cmd::TestCredential, cx)))
+                                // A password not yet in the vault is not tried: it would have to reach SSH some other way.
+                                .map(|d| if picking { d.child(test.on_click(self.on(Cmd::TestCredential, cx))) } else { d.child(test.opacity(0.5).cursor_default()) })
+                                .when(!picking, |d| d.child(div().flex_1().min_w_0().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("保存后再测试：密码只从密码库交给 SSH。"))))
                                 .when(form.testing, |d| d.child(ui::spinner("bind-testing", 14., Theme::accent())))
                                 .when_some(form.tested.as_ref(), |d, (words, failed)| d.child(div().flex_1().min_w_0().text_size(text_px(12.)).line_height(text_px(18.)).text_color(if *failed { Theme::danger() } else { Theme::success() }).child(words.clone()))),
                         ),
-                    Some(t("保存").to_string()),
+                    Some(if picking { t("保存").to_string() } else { t("保存并关联").to_string() }),
                     false,
                 )
             }

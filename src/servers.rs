@@ -36,6 +36,17 @@ pub fn state_label(state: &str) -> &'static str {
     }
 }
 
+/// A name for a credential made from a server's bind dialog: the server and its user for a login,
+/// the server and `sudo` for sudo, with a number added while the name is taken.
+pub fn new_credential_name(host: &str, sudo: bool, user: &str, taken: &[&str]) -> String {
+    let base = match (sudo, user.trim()) {
+        (true, _) => format!("{host}-sudo"),
+        (false, "") => format!("{host}-login"),
+        (false, user) => format!("{host}-{user}"),
+    };
+    std::iter::once(base.clone()).chain((2..).map(|n| format!("{base}-{n}"))).find(|name| !taken.contains(&name.as_str())).unwrap_or(base)
+}
+
 impl Workspace {
     pub fn run_servers(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
         match cmd {
@@ -71,13 +82,36 @@ impl Workspace {
             Cmd::BindCredential(name, sudo) => {
                 let Some(host) = self.view.hosts.iter().find(|host| host.name == name) else { return };
                 let picked = if sudo { host.sudo_secret.clone() } else { host.login_secret.clone() };
-                self.open_modal(Modal::Bind(BindForm { host: name, sudo, picked, testing: false, tested: None }), cx);
+                self.modal_subscriptions.clear();
+                self.open_modal(Modal::Bind(BindForm { host: name, sudo, picked, testing: false, tested: None, new: None }), cx);
             }
             Cmd::PickCredential(name) => {
                 if let Some(Modal::Bind(form)) = self.modal.as_mut() {
                     form.picked = name;
                     form.tested = None;
+                    // The fields of a credential being written go, and the password typed with them.
+                    if form.new.take().is_some() {
+                        self.modal_subscriptions.clear();
+                        self.modal_error.clear();
+                    }
                 }
+            }
+            Cmd::BindNewCredential => {
+                let Some(Modal::Bind(form)) = self.modal.as_ref() else { return };
+                if form.new.is_some() { return }
+                let (host, sudo) = (form.host.clone(), form.sudo);
+                let user = self.view.hosts.iter().find(|known| known.name == host).map(|known| known.user.clone()).unwrap_or_default();
+                let taken: Vec<&str> = self.view.credentials.iter().map(|credential| credential.name.as_str()).collect();
+                let name = new_credential_name(&host, sudo, &user, &taken);
+                // A login credential is the server's own user's password; a sudo one names an account only when it is another.
+                let new = self.credential_form(&name, if sudo { "" } else { &user }, "", true, cx);
+                if let Some(Modal::Bind(form)) = self.modal.as_mut() {
+                    form.new = Some(new);
+                    form.tested = None;
+                }
+                self.modal_error.clear();
+                // The caret goes to the first new field.
+                self.modal_focus = true;
             }
             Cmd::TestCredential => self.test_credential(cx),
             _ => {}
@@ -133,6 +167,16 @@ impl Workspace {
                 self.reload(cx);
                 Ok(())
             }
+            Some(Modal::Bind(BindForm { host, sudo, new: Some(new), .. })) => {
+                let (name, username, password, note) = Self::read_credential_form(new, cx)?;
+                // Stored and linked in one step: a link that cannot be written takes the credential back out of the vault.
+                self.fleet.create_and_bind(host, *sudo, &name, &username, &password, &note, new.agent)?;
+                new.password.update(cx, |input, cx| input.set_text("", cx));
+                let host = host.clone();
+                self.reload(cx);
+                self.say(tf!("已新建凭据「{name}」并关联到 {host}", "Created credential “{name}” and linked it to {host}"), cx);
+                Ok(())
+            }
             Some(Modal::Bind(form)) => {
                 self.fleet.bind_credential(&form.host, form.sudo, &form.picked)?;
                 self.reload(cx);
@@ -154,7 +198,8 @@ impl Workspace {
     /// Try the credential picked in the dialog, without saving the link: log in, and for sudo, validate it.
     fn test_credential(&mut self, cx: &mut Context<Self>) {
         let Some(Modal::Bind(form)) = self.modal.as_mut() else { return };
-        if form.testing { return }
+        // A credential not yet stored is not tried: the test takes passwords from the vault only.
+        if form.testing || form.new.is_some() { return }
         form.testing = true;
         form.tested = None;
         let (fleet, host, sudo, picked) = (self.fleet.clone(), form.host.clone(), form.sudo, form.picked.clone());
@@ -470,5 +515,19 @@ impl Workspace {
                     .when(!host.managed, |d| d.child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_placeholder()).child(t("这台服务器写在 inventory.yml 里，连接信息在那里修改；权限和凭据可以在这里设置。")))),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_credential_name;
+
+    #[test]
+    fn a_new_credential_is_named_after_the_server_and_what_it_is_for() {
+        assert_eq!(new_credential_name("cpu", false, "ops", &[]), "cpu-ops");
+        assert_eq!(new_credential_name("cpu", false, " ", &[]), "cpu-login");
+        assert_eq!(new_credential_name("cpu", true, "ops", &[]), "cpu-sudo");
+        assert_eq!(new_credential_name("cpu", true, "", &["cpu-sudo", "cpu-sudo-2"]), "cpu-sudo-3");
+        assert_eq!(new_credential_name("cpu", false, "ops", &["cpu-sudo"]), "cpu-ops");
     }
 }

@@ -3,7 +3,7 @@
 //! never back to the window or to the model.
 
 use crate::app::{Cmd, Workspace};
-use crate::dialogs::{CredentialForm, Modal};
+use crate::dialogs::{BindForm, CredentialForm, Modal};
 use crate::i18n::t;
 use crate::theme::{Theme, text_px};
 use crate::ui;
@@ -20,7 +20,7 @@ impl Workspace {
                 self.confirm(t("删除凭据"), message, t("删除"), Cmd::DeleteCredential(name), cx);
             }
             Cmd::ToggleAgentUse => {
-                if let Some(Modal::Credential(form)) = self.modal.as_mut() { form.agent = !form.agent }
+                if let Some(Modal::Credential(form) | Modal::Bind(BindForm { new: Some(form), .. })) = self.modal.as_mut() { form.agent = !form.agent }
             }
             _ => {}
         }
@@ -39,30 +39,65 @@ impl Workspace {
     fn credential_dialog(&mut self, editing: Option<String>, cx: &mut Context<Self>) {
         self.modal_subscriptions.clear();
         let known = editing.as_ref().and_then(|name| self.view.credentials.iter().find(|credential| &credential.name == name)).cloned();
-        let password = self.modal_input("", "", false, cx);
-        password.update(cx, |input, _| input.masked = true);
-        let form = CredentialForm {
-            name: self.modal_input("prod-root", known.as_ref().map_or("", |c| c.name.as_str()), false, cx),
-            username: self.modal_input("", known.as_ref().map_or("", |c| c.username.as_str()), false, cx),
-            password,
-            note: self.modal_input("", known.as_ref().map_or("", |c| c.note.as_str()), false, cx),
-            agent: known.as_ref().is_none_or(|c| c.agent),
-            editing,
+        let form = match known {
+            Some(known) => CredentialForm { editing, ..self.credential_form(&known.name, &known.username, &known.note, known.agent, cx) },
+            None => self.credential_form("", "", "", true, cx),
         };
         self.open_modal(Modal::Credential(form), cx);
     }
 
-    pub fn submit_vault(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
-        let Some(Modal::Credential(form)) = self.modal.as_ref() else { return Ok(()) };
+    /// The fields of a credential, filled in; the password always starts empty. Shared by the vault's
+    /// dialog and the bind dialog's 新建凭据, which adds them to the dialog that is open.
+    pub fn credential_form(&mut self, name: &str, username: &str, note: &str, agent: bool, cx: &mut Context<Self>) -> CredentialForm {
+        let name = self.modal_input("prod-root", name, false, cx);
+        let username = self.modal_input("", username, false, cx);
+        let password = self.modal_input("", "", false, cx);
+        password.update(cx, |input, _| input.masked = true);
+        CredentialForm { editing: None, name, username, password, note: self.modal_input("", note, false, cx), agent }
+    }
+
+    /// What a credential form holds, checked: name, user name, password, note. A new one needs a password.
+    pub fn read_credential_form(form: &CredentialForm, cx: &App) -> Result<(String, String, String, String), String> {
         let read = |input: &Entity<crate::input::TextInput>| input.read(cx).text().to_string();
         let (name, username, password, note) = (read(&form.name).trim().to_string(), read(&form.username).trim().to_string(), read(&form.password), read(&form.note).trim().to_string());
         if name.is_empty() { return Err(t("凭据要有名称。").to_string()) }
         if form.editing.is_none() && password.is_empty() { return Err(t("填写密码。").to_string()) }
+        Ok((name, username, password, note))
+    }
+
+    pub fn submit_vault(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
+        let Some(Modal::Credential(form)) = self.modal.as_ref() else { return Ok(()) };
+        let (name, username, password, note) = Self::read_credential_form(form, cx)?;
         self.fleet.save_credential(form.editing.as_deref(), &name, &username, &password, &note, form.agent)?;
         // The password leaves the field with the dialog.
         form.password.update(cx, |input, cx| input.set_text("", cx));
         self.reload(cx);
         Ok(())
+    }
+
+    /// The fields of a credential form as drawn, with the agent switch and what is kept where.
+    pub fn credential_fields(&self, form: &CredentialForm, window: &Window, cx: &mut Context<Self>) -> Div {
+        let field = |label: &str, input: &Entity<crate::input::TextInput>, cx: &App| ui::form_row(t(label).to_string(), ui::field(input, window, cx));
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(field("名称", &form.name, cx))
+            .child(field("用户名（sudo 用另一个账号时填写，否则留空）", &form.username, cx))
+            .child(field(if form.editing.is_some() { "密码（留空保留原密码）" } else { "密码" }, &form.password, cx))
+            .child(field("备注", &form.note, cx))
+            .child(
+                div()
+                    .id("credential-agent")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .cursor_pointer()
+                    .on_click(self.on(Cmd::ToggleAgentUse, cx))
+                    .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).rounded(px(4.)).border_1().border_color(if form.agent { Theme::accent() } else { Theme::line_strong() }).when(form.agent, |d| d.bg(Theme::accent()).child(ui::icon("check", 12., Theme::on_accent()))))
+                    .child(t("允许助手和定时任务的命令使用这条凭据")),
+            )
+            .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("密码加密保存在本机，只交给 SSH 和 sudo；界面和模型都读不到它。名称、用户名和备注不加密，不要在这些地方写密码。")))
     }
 
     pub fn render_vault(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
