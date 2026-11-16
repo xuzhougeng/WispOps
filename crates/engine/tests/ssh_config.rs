@@ -101,6 +101,7 @@ fn follows_include_globs_relative_to_the_main_file_bounded_and_tolerates_a_missi
     assert_eq!(loaded.path, path("config"));
     assert_eq!(loaded.hosts.iter().map(|h| h.alias.as_str()).collect::<Vec<_>>(), ["main", "a-host", "b-host", "abs"]);
     assert_eq!(loaded.hosts[0].host_name.as_deref(), Some("10.0.0.1"));
-    assert_eq!(loaded.hosts[1].source, path("conf.d/a.conf"));
+    // Compared as paths: Windows writes the separator the other way.
+    assert_eq!(std::path::Path::new(&loaded.hosts[1].source), std::path::Path::new(&path("conf.d/a.conf")));
     assert!(load_ssh_config_hosts(&path("nope")).unwrap().hosts.is_empty());
 }
