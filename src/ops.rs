@@ -47,6 +47,13 @@ pub struct RunView {
     pub state: String,
     pub findings: Vec<FindingView>,
     pub disk_max: Option<(String, f64)>,
+    /// Every mount and how full it was, as inspected.
+    pub disks: Vec<(String, f64)>,
+    pub cpu_pct: Option<f64>,
+    /// Mean utilisation, memory used across all GPUs, and the hottest GPU.
+    pub gpu_util_pct: Option<f64>,
+    pub gpu_mem_pct: Option<f64>,
+    pub gpu_temp_c: Option<f64>,
     pub mem_avail_pct: Option<f64>,
     pub load1: Option<f64>,
     pub login_ms: Option<f64>,
@@ -212,6 +219,17 @@ pub struct View {
     pub inventory_error: Option<String>,
     pub vault_error: Option<String>,
     pub vault_key_place: &'static str,
+    pub limits: Limits,
+}
+
+/// The thresholds the meters and charts are coloured by: (warning, critical).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Limits {
+    pub disk: (f64, f64),
+    pub gpu_temp: f64,
+    /// Of the memory still available: lower is worse.
+    pub mem_avail: (f64, f64),
+    pub load_per_core: (f64, f64),
 }
 
 /// The inspections of a server the pages keep at hand.
@@ -668,7 +686,8 @@ impl Fleet {
                 let findings: Vec<FindingView> = record.findings.iter().map(|finding| FindingView { severity: finding.severity.as_str().into(), message: finding.message.clone(), muted: mutes::mute_for(finding, &muted, now_ms).is_some() }).collect();
                 let state = if !record.is_ok() { "unreachable" } else { inspect::worst_severity(record.findings.iter().filter(|finding| mutes::mute_for(finding, &muted, now_ms).is_none())).map_or("ok", Severity::as_str) };
                 let disk_max = record.metrics.disk_pct.iter().max_by(|a, b| a.1.total_cmp(b.1)).map(|(mount, pct)| (mount.to_string(), *pct));
-                RunView { at: record.metrics.at.clone(), state: state.into(), findings, disk_max, mem_avail_pct: record.metrics.mem_avail_pct, load1: record.metrics.load1, login_ms: record.metrics.login_ms }
+                let disks = record.metrics.disk_pct.iter().map(|(mount, pct)| (mount.to_string(), *pct)).collect();
+                RunView { at: record.metrics.at.clone(), state: state.into(), findings, disk_max, disks, cpu_pct: record.metrics.cpu_pct, gpu_util_pct: record.metrics.gpu_util_pct, gpu_mem_pct: record.metrics.gpu_mem_pct, gpu_temp_c: record.metrics.gpu_temp_c, mem_avail_pct: record.metrics.mem_avail_pct, load1: record.metrics.load1, login_ms: record.metrics.login_ms }
             }).collect();
             let policy = |policy: &config::Policy| [policy.change.as_str().to_string(), policy.sudo.as_str().to_string(), policy.destructive.as_str().to_string()];
             let own = host.policy_override.clone().unwrap_or_default();
@@ -712,7 +731,8 @@ impl Fleet {
             };
             TaskView { name: task.name.clone(), draft: draft_of(task), managed: loaded.managed_tasks.contains(&task.name), scheduled: timed.is_some(), enabled: entry.is_some(), when: describe_when(task.schedule.as_ref()), next, last: last.map(|record| TaskLast { at: record.at.clone(), problems: record.has_problems(), summary: record.summary() }), error: entry.and_then(|entry| entry.last_error.clone()) }
         }).collect();
-        View { hosts, credentials, tasks, audit: vec![], inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" } }
+        let limits = Limits { gpu_temp: self.thresholds.gpu_temp_warn_c, disk: (self.thresholds.disk_warn_pct, self.thresholds.disk_crit_pct), mem_avail: (self.thresholds.mem_avail_warn_pct, self.thresholds.mem_avail_crit_pct), load_per_core: (self.thresholds.load_per_core_warn, self.thresholds.load_per_core_crit) };
+        View { limits, hosts, credentials, tasks, audit: vec![], inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" } }
     }
 
     pub fn audit(&self, host: Option<&str>, hours: u32, limit: usize) -> Vec<AuditRow> {

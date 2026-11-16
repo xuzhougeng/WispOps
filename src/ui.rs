@@ -210,6 +210,69 @@ pub fn caption(text: impl Into<SharedString>) -> Div {
     div().text_size(text_px(11.)).font_weight(FontWeight::MEDIUM).text_color(Theme::text_tertiary()).child(text.into())
 }
 
+// ---- panels, meters and small charts
+
+/// A card on a page: a white plane with a hairline and a little lift.
+pub fn panel() -> Div {
+    div().flex().flex_col().rounded(px(12.)).border_1().border_color(Theme::line()).bg(Theme::bg_body()).shadow(theme::shadow_card())
+}
+
+/// A panel's heading: what it holds, and a quieter note beside it.
+pub fn panel_head(title: impl Into<SharedString>, note: impl Into<SharedString>) -> Div {
+    div().flex().items_center().gap(px(8.)).child(div().flex_none().text_size(text_px(13.)).font_weight(FontWeight::SEMIBOLD).child(title.into())).child(div().flex_1().min_w_0().truncate().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(note.into()))
+}
+
+/// A share of a whole as a thin bar; it takes the width left to it.
+pub fn meter(pct: f64, color: Hsla) -> Div {
+    div().flex_1().min_w(px(20.)).h(px(6.)).rounded_full().bg(Theme::groove()).overflow_hidden().child(div().h_full().min_w(px(3.)).rounded_full().bg(color).w(relative((pct / 100.).clamp(0., 1.) as f32)))
+}
+
+/// One measure over the inspections, the oldest at the left, from 0 to `top`: a line over a
+/// soft fill, broken where there was no value. Each inspection has a column that says its
+/// own value on hover (`tips`, as many as `values`).
+pub fn trend(id: &str, values: Vec<Option<f64>>, tips: Vec<String>, top: f64, color: Hsla, height: f32) -> Div {
+    let columns = tips.into_iter().enumerate().map(|(n, words)| div().id(SharedString::from(format!("{id}-{n}"))).flex_1().h_full().rounded(px(2.)).hover(|s| s.bg(Theme::hover())).tooltip(tip(words))).collect::<Vec<_>>();
+    let ring = Theme::bg_body();
+    let line = canvas(|_, _, _| (), move |bounds, _, window, _| {
+        let count = values.len();
+        if count == 0 || top <= 0. { return }
+        let (left, bottom) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y + bounds.size.height));
+        let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height) - 4.);
+        let place = |n: usize, value: f64| point(px(left + (n as f32 + 0.5) * width / count as f32), px(bottom - 1. - (value / top).clamp(0., 1.) as f32 * (height - 1.)));
+        let mut runs: Vec<Vec<Point<Pixels>>> = vec![vec![]];
+        for (n, value) in values.iter().enumerate() {
+            match value {
+                Some(value) => runs.last_mut().unwrap().push(place(n, *value)),
+                None => if !runs.last().unwrap().is_empty() { runs.push(vec![]) },
+            }
+        }
+        let dot = |at: Point<Pixels>, radius: f32, colour: Hsla, window: &mut Window| window.paint_quad(fill(Bounds::new(point(at.x - px(radius), at.y - px(radius)), size(px(radius * 2.), px(radius * 2.))), colour).corner_radii(px(radius)));
+        for run in &runs {
+            let (Some(first), Some(last)) = (run.first(), run.last()) else { continue };
+            if run.len() == 1 {
+                dot(*first, 2., color, window);
+                continue;
+            }
+            let mut area = PathBuilder::fill();
+            area.move_to(point(first.x, px(bottom)));
+            for at in run { area.line_to(*at) }
+            area.line_to(point(last.x, px(bottom)));
+            area.close();
+            if let Ok(path) = area.build() { window.paint_path(path, color.opacity(0.13)) }
+            let mut stroke = PathBuilder::stroke(px(1.5));
+            stroke.move_to(*first);
+            for at in &run[1..] { stroke.line_to(*at) }
+            if let Ok(path) = stroke.build() { window.paint_path(path, color) }
+        }
+        // Where it stands now.
+        if values.last().is_some_and(Option::is_some) && let Some(last) = runs.last().and_then(|run| run.last()) {
+            dot(*last, 4.5, ring, window);
+            dot(*last, 2.5, color, window);
+        }
+    });
+    div().relative().w_full().h(px(height)).child(line.absolute().top_0().left_0().size_full()).child(div().absolute().top_0().left_0().size_full().flex().children(columns))
+}
+
 // ---- window chrome
 //
 // On Windows and macOS the window has no separate title bar: the top strip
