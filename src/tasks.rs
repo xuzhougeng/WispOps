@@ -28,6 +28,10 @@ pub fn playbook_label(key: &str) -> &'static str {
     PLAYBOOKS.iter().find(|(known, ..)| *known == key).map_or("检查脚本", |(_, label, _)| label)
 }
 
+/// The task form holds four kinds of check a row, so seven take two rows and the schedule stays in sight.
+const TASK_FORM_W: f32 = 800.;
+const PLAYBOOK_W: f32 = (TASK_FORM_W - 40. - 3. * 6.) / 4.;
+
 impl Workspace {
     pub fn run_tasks(&mut self, cmd: Cmd, _: &mut Window, cx: &mut Context<Self>) {
         match cmd {
@@ -46,6 +50,11 @@ impl Workspace {
             }
             Cmd::ToggleTaskSudo => {
                 if let Some(Modal::Task(form)) = self.modal.as_mut() { form.sudo = !form.sudo }
+            }
+            Cmd::ToggleTaskWeekday(day) => {
+                if let Some(Modal::Task(form)) = self.modal.as_mut() {
+                    if form.weekdays.contains(&day) { form.weekdays.retain(|kept| *kept != day) } else { form.weekdays.push(day) }
+                }
             }
             _ => {}
         }
@@ -69,6 +78,8 @@ impl Workspace {
             commands: self.modal_input("每行一条只读命令，例如：systemctl is-active nginx", &known.commands.join("\n"), true, cx),
             schedule: match known.schedule.as_str() { "daily" => "daily", "every" => "every", "cron" => "cron", _ => "manual" },
             daily: self.modal_input("08:30", &known.daily, false, cx),
+            weekdays: known.weekdays.clone(),
+            zone: known.time_zone.clone(),
             every: self.modal_input("60", &known.every_minutes.to_string(), false, cx),
             cron: self.modal_input(crate::ops::DEFAULT_CRON, if known.cron.is_empty() { crate::ops::DEFAULT_CRON } else { &known.cron }, false, cx),
             sudo: known.sudo,
@@ -93,6 +104,8 @@ impl Workspace {
             commands: read(&form.commands).lines().map(str::trim).filter(|line| !line.is_empty()).map(String::from).collect(),
             schedule: form.schedule.into(),
             daily: read(&form.daily),
+            weekdays: if form.schedule == "daily" { form.weekdays.clone() } else { vec![] },
+            time_zone: form.zone.clone(),
             every_minutes: if form.schedule == "every" { every.parse::<u32>().ok().filter(|minutes| *minutes > 0).ok_or_else(|| t("间隔应是大于 0 的分钟数。").to_string())? } else { 60 },
             cron: read(&form.cron),
             sudo: form.sudo,
@@ -149,7 +162,7 @@ impl Workspace {
                 .id(SharedString::from(format!("playbook-{key}")))
                 .flex()
                 .flex_col()
-                .w(px(178.))
+                .w(px(PLAYBOOK_W))
                 .px(px(10.))
                 .py(px(7.))
                 .rounded(px(8.))
@@ -170,6 +183,32 @@ impl Workspace {
         ])
         .w(px(330.));
         let cron = (form.schedule == "cron").then(|| self.cron_preview(form, cx));
+        // The days a daily task runs on: none ticked is every day.
+        let weekdays = (form.schedule == "daily").then(|| {
+            div().flex().flex_1().min_w_0().items_center().gap(px(4.)).pb(px(3.)).children(["一", "二", "三", "四", "五", "六", "日"].iter().zip(1u32..).map(|(name, day)| {
+                let on = form.weekdays.contains(&day);
+                div()
+                    .id(("task-weekday", day as usize))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .flex_none()
+                    .min_w(text_px(28.))
+                    .h(text_px(26.))
+                    .px(px(4.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(if on { Theme::accent() } else { Theme::line() })
+                    .when(on, |d| d.bg(Theme::accent_soft()).font_weight(FontWeight::MEDIUM))
+                    .when(!on, |d| d.text_color(Theme::text_secondary()))
+                    .text_size(text_px(12.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::hover()))
+                    .on_click(self.on(Cmd::ToggleTaskWeekday(day), cx))
+                    .child(crate::cron::weekday_short(name).to_string())
+            }))
+            .child(div().flex_1().min_w_0().truncate().pl(px(6.)).text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(if form.weekdays.is_empty() { t("每天都运行；点选星期只在那几天运行") } else { t("只在选中的星期运行") }))
+        });
         let wants_paths = matches!(form.playbook, "disk" | "space" | "new-files");
         let body = div()
             .flex()
@@ -183,8 +222,7 @@ impl Workspace {
             .when(form.playbook == "script", |d| d.child(ui::form_row(t("检查脚本").to_string(), self.script_choices(&form.script, cx))))
             .child(field(if form.playbook == "custom" { "只读命令（每行一条）" } else { "附加的只读命令（可选，每行一条）" }, &form.commands, window, cx))
             .child(field("报告要求（助手汇报时照此写）", &form.instruction, window, cx))
-            .child(div().flex().items_end().gap(px(12.)).child(ui::form_row(t("运行时间").to_string(), schedules)).when(form.schedule == "daily", |d| d.child(div().w(px(100.)).child(ui::field(&form.daily, window, cx)))).when(form.schedule == "every", |d| d.child(div().w(px(100.)).child(ui::field(&form.every, window, cx))).child(div().pb(px(8.)).text_color(Theme::text_tertiary()).child(t("分钟")))).when(form.schedule == "cron", |d| d.child(div().flex_1().child(ui::field(&form.cron, window, cx)))))
-            .when_some(cron, |d, cron| d.child(cron))
+            // The sudo box before the schedule: a cron preview then pushes the footnote out of sight, not a choice.
             .child(
                 div()
                     .id("task-sudo")
@@ -194,10 +232,12 @@ impl Workspace {
                     .cursor_pointer()
                     .on_click(self.on(Cmd::ToggleTaskSudo, cx))
                     .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).rounded(px(4.)).border_1().border_color(if form.sudo { Theme::accent() } else { Theme::line_strong() }).when(form.sudo, |d| d.bg(Theme::accent()).child(ui::icon("check", 12., Theme::on_accent()))))
-                    .child(t("用 sudo 运行采集器（预先授权这个任务的只读采集；服务器策略写了拒绝 sudo 时仍然拒绝）")),
+                    .child(div().flex_1().min_w_0().child(t("用 sudo 运行采集器（预先授权这个任务的只读采集；服务器策略写了拒绝 sudo 时仍然拒绝）"))),
             )
+            .child(div().flex().items_end().gap(px(12.)).child(ui::form_row(t("运行时间").to_string(), schedules)).when(form.schedule == "daily", |d| d.child(div().w(px(84.)).flex_none().child(ui::field(&form.daily, window, cx)))).children(weekdays).when(form.schedule == "every", |d| d.child(div().w(px(100.)).child(ui::field(&form.every, window, cx))).child(div().pb(px(8.)).text_color(Theme::text_tertiary()).child(t("分钟")))).when(form.schedule == "cron", |d| d.child(div().flex_1().child(ui::field(&form.cron, window, cx)))))
+            .when_some(cron, |d, cron| d.child(cron))
             .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("任务只采集和记录，不做任何变更。命令在保存时按与助手相同的分类器校验，只接受只读命令。定时运行需要这个窗口开着。")));
-        (if form.editing.is_some() { t("编辑例行任务").to_string() } else { t("新建例行任务").to_string() }, 620., body, Some(t("保存").to_string()), false)
+        (if form.editing.is_some() { t("编辑例行任务").to_string() } else { t("新建例行任务").to_string() }, TASK_FORM_W, body, Some(t("保存").to_string()), false)
     }
 
     /// Under the cron field: what the expression means and its next runs in the configured zone,

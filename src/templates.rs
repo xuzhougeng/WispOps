@@ -114,7 +114,7 @@ impl Fleet {
         let id = args["id"].as_str().unwrap_or("");
         if templates::library(self.data_dir(), &self.template_limits(), &self.config.time_zone)?.iter().any(|template| template.id == id) { return Err(format!("template id \"{id}\" is already in the task library; choose another id")) }
         let mut definition = json!({"playbook": args["playbook"], "instruction": args["instruction"], "schedule": {"daily": args["daily"].as_str().unwrap_or("08:30"), "timeZone": args["timeZone"].as_str().unwrap_or(&self.config.time_zone)}});
-        for key in ["paths", "days", "hours", "commands"] {
+        for key in ["paths", "days", "hours", "commands", "script"] {
             if !args[key].is_null() { definition[key] = args[key].clone() }
         }
         let template = json!({"id": args["id"], "title": args["title"], "category": args["category"], "description": args["description"], "parameters": if args["parameters"].is_null() { json!([]) } else { args["parameters"].clone() }, "definition": definition});
@@ -137,11 +137,13 @@ fn draft_from(template: &TaskTemplate) -> TaskDraft {
         commands: definition.commands.clone(),
         schedule: match schedule { Some(schedule) if schedule.cron.is_some() => "cron", Some(schedule) if schedule.daily.is_some() => "daily", Some(schedule) if schedule.every_minutes.is_some() => "every", _ => "manual" }.into(),
         daily: schedule.and_then(|schedule| schedule.daily.clone()).unwrap_or_else(|| "08:30".into()),
+        weekdays: schedule.map(|schedule| schedule.weekdays.clone()).unwrap_or_default(),
         every_minutes: schedule.and_then(|schedule| schedule.every_minutes).unwrap_or(60) as u32,
+        time_zone: schedule.and_then(|schedule| schedule.time_zone.clone()),
         cron: schedule.and_then(|schedule| schedule.cron.clone()).unwrap_or_else(|| crate::ops::DEFAULT_CRON.into()),
         sudo: false,
-        // A template naming a check script is refused by the library: scripts are accepted one device at a time.
-        script: String::new(),
+        // The template names the script; whether this device has accepted it is checked when the task is saved.
+        script: definition.script.clone().unwrap_or_default(),
         days: definition.days,
         hours: definition.hours,
         template: Some(template.id.clone()),
@@ -153,13 +155,13 @@ fn template_of_task(task: &TaskSpec) -> TaskTemplate {
     // A task made from a template carries the report rules already; they are added again when the template is used.
     let instruction = task.instruction.clone().unwrap_or_default();
     let instruction = instruction.strip_suffix(TEMPLATE_REPORT_RULES).map(String::from).unwrap_or(instruction);
-    let schedule = task.schedule.clone().map(|schedule| TaskSchedule { cron: None, ..schedule }).filter(TaskSchedule::is_timed);
+    let schedule = task.schedule.clone().filter(TaskSchedule::is_timed);
     TaskTemplate {
         id: task.name.clone(),
         title: task.description.clone().unwrap_or_else(|| task.name.clone()),
         description: task.description.clone().unwrap_or_default(),
         category: t("自定义").to_string(),
-        definition: TemplateDefinition { playbook: task.playbook, instruction, paths: task.paths.clone(), days: task.days, hours: task.hours, schedule, commands: task.commands.clone() },
+        definition: TemplateDefinition { playbook: task.playbook, instruction, paths: task.paths.clone(), days: task.days, hours: task.hours, schedule, commands: task.commands.clone(), script: task.script.clone() },
         parameters: vec![],
     }
 }

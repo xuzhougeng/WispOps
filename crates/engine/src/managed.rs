@@ -13,6 +13,10 @@ use sha2::{Digest, Sha256};
 use crate::config::{AuthMethod, CAPABILITIES, HostSpec, Permission, PolicySpec, TaskSpec, is_valid_name, validate_hosts, validate_tasks};
 use crate::fsutil::{create_private_dir, hex, random_hex, set_mode, with_suffix, write_new_private};
 
+/// What a write says when another holds the lock, and when the file changed since it was read.
+const BUSY: &str = "另一个保存操作正在进行，请稍后刷新重试。";
+const STALE: &str = "数据已更新，请刷新后再保存，避免覆盖其他修改。";
+
 /// What [`LocalState::read`] returns: the value and the revision a later change must name.
 #[derive(Clone, Debug)]
 pub struct Revisioned<T> {
@@ -61,6 +65,23 @@ impl<T: Serialize> LocalState<T> {
     }
 
     /// Replace the value if the file still has `revision`.
+    /// Read and change in one go, waiting its turn: for a writer that has no person behind it to
+    /// refresh and try again (the assistant queueing two drafts in one turn). The update is
+    /// applied to whatever is there when the lock is had, so nothing another writer saved is lost.
+    pub fn update(&self, update: impl Fn(T) -> Result<T, String>) -> Result<(), String> {
+        let mut tries = 0;
+        loop {
+            let read = self.read()?;
+            match self.change(&read.revision, &update) {
+                Err(error) if (error == BUSY || error == STALE) && tries < 40 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                other => return other,
+            }
+        }
+    }
+
     pub fn change(&self, revision: &str, update: impl FnOnce(T) -> Result<T, String>) -> Result<(), String> {
         self.change_with(revision, update, |commit| commit())
     }
@@ -86,7 +107,7 @@ impl<T: Serialize> LocalState<T> {
         }
         match builder.create(&lock) {
             Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => return Err("另一个保存操作正在进行，请稍后刷新重试。".to_string()),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => return Err(BUSY.to_string()),
             Err(error) => return Err(io(error)),
         }
         let temp = with_suffix(&self.path, &format!(".{}.tmp", random_hex::<16>().unwrap_or_else(|_| std::process::id().to_string())));
@@ -94,7 +115,7 @@ impl<T: Serialize> LocalState<T> {
         let mut committed = false;
         let result = (|| -> Result<(), String> {
             previous = self.raw()?;
-            if revision_of(&previous) != revision { return Err("数据已更新，请刷新后再保存，避免覆盖其他修改。".to_string()) }
+            if revision_of(&previous) != revision { return Err(STALE.to_string()) }
             let current = self.parse(&previous)?;
             let updated = update(current)?;
             let next = (self.validate)(serde_json::to_value(&updated).map_err(|error| error.to_string())?)?;

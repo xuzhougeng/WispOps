@@ -585,6 +585,8 @@
  "运行一次": "Run once",
  "运行任务": "Run task",
  "运行时间": "When",
+ "每天都运行；点选星期只在那几天运行": "Every day; pick days to limit",
+ "只在选中的星期运行": "Picked days only",
  "分": "minute",
  "时": "hour",
  "日": "day-of-month",

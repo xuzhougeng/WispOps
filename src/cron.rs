@@ -159,6 +159,20 @@ pub fn preview(expression: &str, zone: &str, now: i64, count: usize) -> Result<(
     Ok((describe(&parsed), parsed.upcoming(tz, now, count).into_iter().map(|at| run_time(at, zone)).collect()))
 }
 
+/// A weekday's one-character Chinese name as the window's language writes it short: `一` or `Mon`.
+pub fn weekday_short(name: &str) -> &'static str {
+    let english = crate::i18n::is_english();
+    match name {
+        "一" => if english { "Mon" } else { "一" },
+        "二" => if english { "Tue" } else { "二" },
+        "三" => if english { "Wed" } else { "三" },
+        "四" => if english { "Thu" } else { "四" },
+        "五" => if english { "Fri" } else { "五" },
+        "六" => if english { "Sat" } else { "六" },
+        _ => if english { "Sun" } else { "日" },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{describe, error, preview};

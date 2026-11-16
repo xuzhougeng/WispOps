@@ -47,6 +47,10 @@ pub struct TemplateDefinition {
     /// Read-only commands run on every linked server; `{{key}}` placeholders are inserted as one single-quoted shell word.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<String>,
+    /// The check script of the `script` playbook, by its id in the script library. The template
+    /// carries the name only: the script must have been accepted on the device that uses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,11 +225,12 @@ pub fn validate_template(value: &Value, extra_read: &HashSet<String>) -> Result<
     let definition = raw.get("definition").and_then(Value::as_object).ok_or("模板信息不正确。")?;
     if definition.contains_key("targets") || definition.contains_key("sudo") { return Err("模板不保存服务器关联或 sudo 授权。".into()) }
     let mut parsed: TemplateDefinition = serde_json::from_value(Value::Object(definition.clone())).map_err(|error| format!("模板定义不正确：{error}"))?;
-    if parsed.playbook == Playbook::Script { return Err("模板不支持检查脚本，请改用内置检查或只读命令。".into()) }
+    if parsed.playbook == Playbook::Script && !parsed.script.as_deref().is_some_and(|script| js_re!(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$").is_match(script)) { return Err("用检查脚本的模板要写明脚本库里的脚本标识。".into()) }
+    if parsed.playbook != Playbook::Script && parsed.script.is_some() { return Err("只有检查脚本的模板才能指定脚本。".into()) }
     if parsed.instruction.trim().is_empty() || parsed.instruction.chars().count() > 30000 { return Err("请填写巡查规则，最多 30000 字符。".into()) }
     parsed.commands = parsed.commands.iter().map(|command| command.trim().to_string()).collect();
     if parsed.commands.iter().any(String::is_empty) { return Err("只读命令不能为空行。".into()) }
-    let task = |commands: Vec<String>| TaskSpec { name: PROBE_HOST.into(), targets: PROBE_HOST.into(), playbook: parsed.playbook, instruction: Some(parsed.instruction.clone()), schedule: parsed.schedule.clone(), paths: parsed.paths.clone(), days: parsed.days, hours: parsed.hours, commands, ..Default::default() };
+    let task = |commands: Vec<String>| TaskSpec { name: PROBE_HOST.into(), targets: PROBE_HOST.into(), playbook: parsed.playbook, instruction: Some(parsed.instruction.clone()), schedule: parsed.schedule.clone(), paths: parsed.paths.clone(), days: parsed.days, hours: parsed.hours, commands, script: parsed.script.clone(), ..Default::default() };
     // Collector, schedule and path rules first; commands are checked below in rendered form.
     let named = |error: String| error.replace(&format!("task \"{PROBE_HOST}\""), "模板");
     validate_task(&task(parsed.commands.clone())).and_then(|()| check_as_task(task(vec![]), extra_read)).map_err(named)?;
@@ -275,9 +280,8 @@ pub fn draft_store(data_dir: &Path) -> LocalState<Entries<TemplateDraft>> {
 /// Queue a validated draft; a newer draft with the same template id replaces the older one, and only the latest few are kept.
 pub fn add_template_draft(data_dir: &Path, template: &Value, extra_read: &HashSet<String>, now_ms: i64) -> Result<TemplateDraft, String> {
     let draft = TemplateDraft { id: random_hex::<16>()?, created_at: time::to_iso(now_ms), template: validate_template(template, extra_read)? };
-    let store = draft_store(data_dir);
-    let read = store.read()?;
-    store.change(&read.revision, |mut state| {
+    // No person is behind this write to refresh and retry: it waits for its turn.
+    draft_store(data_dir).update(|mut state| {
         state.entries.retain(|entry| entry.template.id != draft.template.id);
         state.entries.push(draft.clone());
         let surplus = state.entries.len().saturating_sub(MAX_DRAFTS);
@@ -409,6 +413,7 @@ mod tests {
             (with("definition.instruction", json!(" ")), "巡查规则"),
             (with("definition.playbook", json!("new-files")), "paths"),
             (with("definition.playbook", json!("script")), "检查脚本"),
+            (with("definition.script", json!("disk-smart")), "只有检查脚本"),
             (with("definition.schedule", json!({"daily": "08:30", "everyMinutes": 20})), "exactly one"),
             (with("definition.schedule", json!({"daily": "08:30", "timeZone": "Mars/Base"})), "时区"),
             (with("parameters", json!([{"key": "a", "label": "A", "hint": "", "required": true}, {"key": "a", "label": "B", "hint": "", "required": true}])), "重复"),
@@ -446,6 +451,32 @@ mod tests {
         // The person's own edit of the instruction is filled the same way.
         let (instruction, _) = fill(services, "只报告 {{services}} 的异常。", &services.definition.commands, &values(&[("services", "nginx")])).unwrap();
         assert!(instruction.starts_with("只报告 nginx 的异常。"));
+    }
+
+    #[test]
+    fn a_template_may_name_a_check_script_and_carries_only_its_id() {
+        let template = json!({"id": "smart", "title": "磁盘 SMART", "description": "", "category": "自定义", "parameters": [], "definition": {"playbook": "script", "script": "disk-smart", "instruction": "按脚本的结论汇报。"}});
+        let parsed = validate_template(&template, &none()).unwrap();
+        assert_eq!((parsed.definition.playbook, parsed.definition.script.as_deref()), (Playbook::Script, Some("disk-smart")));
+        let mut odd = template.clone();
+        odd["definition"]["script"] = json!("../etc/passwd");
+        assert!(validate_template(&odd, &none()).unwrap_err().contains("脚本标识"));
+    }
+
+    #[test]
+    fn drafts_queued_at_the_same_moment_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let draft = |n: usize| json!({"id": format!("check-{n}"), "title": "检查", "description": "", "category": "自定义", "parameters": [], "definition": {"playbook": "inspect", "instruction": "只读检查。"}});
+        // Six writers at once: each waits for the lock instead of giving up on it.
+        std::thread::scope(|scope| {
+            for n in 0..6 {
+                let (dir, draft) = (dir.path(), draft(n));
+                scope.spawn(move || add_template_draft(dir, &draft, &none(), 0).unwrap());
+            }
+        });
+        let mut ids: Vec<String> = draft_store(dir.path()).read().unwrap().value.entries.into_iter().map(|entry| entry.template.id).collect();
+        ids.sort();
+        assert_eq!(ids, (0..6).map(|n| format!("check-{n}")).collect::<Vec<_>>());
     }
 
     #[test]
