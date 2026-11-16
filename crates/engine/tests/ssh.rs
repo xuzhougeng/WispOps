@@ -58,6 +58,13 @@ fn pipes_the_script_on_stdin() {
 }
 
 #[test]
+fn sends_windows_line_ends_as_unix_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = runner_with(dir.path(), &[]).run(request("export LC_ALL=C\r\nif true; then\r\n  echo \"[$LC_ALL]\"\r\nfi\r\n"));
+    assert_eq!((r.status, r.stdout.as_str(), r.stderr.as_str()), (RunStatus::Ok, "[C]\n", ""), "{r:?}");
+}
+
+#[test]
 fn runs_sudo_with_a_stored_password_that_never_reaches_the_script_or_output() {
     let dir = tempfile::tempdir().unwrap();
     let r = runner_with(dir.path(), &[]).run(request("echo root=$FAKE_ROOT; cat; echo 'pa$$ w0rd'").sudo(true).sudo_password(Some(PASSWORD.to_string())));

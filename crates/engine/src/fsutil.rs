@@ -1,4 +1,5 @@
-//! Private-file helpers: owner-only directories and files, random names, home expansion.
+//! Private-file helpers: owner-only directories and files, random names, home expansion; and
+//! [`no_window`] for the console programs the app starts.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -102,4 +103,16 @@ pub fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);
     PathBuf::from(name)
+}
+
+/// A console program started by the app (`ssh`, the keychain helper) gets no window of its own.
+/// On Windows the app has no console, so each such child would otherwise open a black one.
+pub fn no_window(command: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
 }

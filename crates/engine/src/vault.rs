@@ -17,7 +17,7 @@ use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::fsutil::{random_bytes, set_mode, write_new_private};
+use crate::fsutil::{no_window, random_bytes, set_mode, write_new_private};
 use crate::inventory::Host;
 use crate::jsre::js_trim;
 use crate::managed::LocalState;
@@ -59,7 +59,7 @@ impl<F: Fn(&Path, bool) -> Result<[u8; 32], String> + Send + Sync> KeyProvider f
 /// Run a helper with its input on stdin. Secrets travel on stdin, never in process arguments or error messages.
 fn run_tool(file: &str, args: &[&str], input: &str) -> Result<Vec<u8>, String> {
     let unavailable = || "无法访问系统密码库。".to_string();
-    let mut child = Command::new(file).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|_| unavailable())?;
+    let mut child = no_window(&mut Command::new(file)).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|_| unavailable())?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(input.as_bytes());
     }
