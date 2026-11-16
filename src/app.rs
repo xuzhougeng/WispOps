@@ -200,6 +200,16 @@ pub enum Cmd {
     ToggleSkill(String),
     RevealData,
     OpenUrl(String),
+    // ---- updates
+    CheckUpdate,
+    ToggleUpdateCheck,
+    DownloadUpdate,
+    /// Show the downloaded package in the file manager.
+    RevealUpdate(PathBuf),
+    /// Put away the notice beside the pages for the version it names.
+    DismissUpdate,
+    /// From the notice: 设置 › 通用, where the update is.
+    ShowUpdate,
     // ---- dialogs and menus
     SubmitModal,
     CloseModal,
@@ -289,6 +299,8 @@ pub struct Workspace {
     pub resizing: Option<Edge>,
     pub page_scroll: ScrollHandle,
     pub detail_scroll: ScrollHandle,
+    /// What the last update check found, and whether one or a download is under way.
+    pub updates: crate::updates_view::UpdateState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -318,7 +330,7 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -331,6 +343,7 @@ impl Workspace {
     /// Once the window is there: the timers that keep the fleet looked after while it is open.
     pub fn start(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.watch_fleet(cx);
+        self.start_updates(cx);
     }
 
     pub fn on(&self, cmd: Cmd, cx: &mut Context<Self>) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -625,6 +638,7 @@ impl Workspace {
                 self.audit_hours = hours;
                 self.reload_audit(cx);
             }
+            cmd @ (Cmd::CheckUpdate | Cmd::ToggleUpdateCheck | Cmd::DownloadUpdate | Cmd::RevealUpdate(_) | Cmd::DismissUpdate | Cmd::ShowUpdate) => self.run_updates(cmd, cx),
             cmd => self.run_settings(cmd, window, cx),
         }
         cx.notify();
@@ -875,6 +889,7 @@ impl Workspace {
                     .child(div().h(px(10.)))
                     .child(row(Page::Assistant, None, self, cx))
                     .child(div().flex_1())
+                    .children(self.render_update_notice(cx))
                     .child(div().h(px(1.)).mx(px(6.)).my(px(6.)).bg(Theme::line()))
                     .child(row(Page::Vault, None, self, cx))
                     .child(row(Page::Settings, None, self, cx)),
