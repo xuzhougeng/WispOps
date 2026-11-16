@@ -227,9 +227,14 @@ impl Workspace {
                     let minutes = this.settings.auto_inspect_minutes;
                     if minutes > 0 {
                         let due = this.fleet.inspection_due(minutes);
-                        if !due.is_empty() { this.host_work(due.join(","), cx, |fleet, selector| fleet.inspect(selector, "auto").map(|_| String::new())) }
+                        if !due.is_empty() {
+                            this.host_work(due.join(","), cx, |fleet, selector| fleet.inspect(selector, "auto").map(|_| String::new()));
+                            // The same servers are looked over for tasks that have run too long.
+                            this.check_long_jobs(due.join(","), true, cx);
+                        }
                     }
                     this.run_due_tasks(cx);
+                    this.run_due_disk_scans(cx);
                 });
                 if alive.is_err() { break }
             }
@@ -451,6 +456,7 @@ impl Workspace {
                             .flex_wrap()
                             .gap(px(6.))
                             .child(ui::secondary_button("detail-inspect", t("巡检")).h(text_px(28.)).when(working, |b| b.opacity(0.5)).on_click(self.on(Cmd::InspectHosts(name.clone()), cx)))
+                            .child(ui::secondary_button("detail-space", t("磁盘占用")).h(text_px(28.)).on_click(self.on(Cmd::DiskHost(name.clone()), cx)))
                             .child(ui::secondary_button("detail-disk", t("诊断磁盘")).h(text_px(28.)).child(ui::icon("sparkle", 12., Theme::accent())).on_click(self.on(Cmd::Draft(format!("/disk {name} /")), cx)))
                             .child(ui::secondary_button("detail-security", t("安全排查")).h(text_px(28.)).child(ui::icon("sparkle", 12., Theme::accent())).on_click(self.on(Cmd::Suggest(format!("/security {name}")), cx)))
                             .child(ui::secondary_button("detail-audit", t("审计")).h(text_px(28.)).on_click(self.on(Cmd::AuditHost(Some(name.clone())), cx))),

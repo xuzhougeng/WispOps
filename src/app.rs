@@ -29,6 +29,9 @@ actions!(workspace, [Dismiss, ToggleAssistant, NewChat, ShowSettings, Refresh, F
 pub enum Page {
     Overview,
     Servers,
+    Disk,
+    LongJobs,
+    Security,
     Tasks,
     Vault,
     Audit,
@@ -40,6 +43,9 @@ impl Page {
         match self {
             Page::Overview => "机群总览",
             Page::Servers => "服务器",
+            Page::Disk => "磁盘",
+            Page::LongJobs => "长时任务",
+            Page::Security => "安全",
             Page::Tasks => "例行任务",
             Page::Vault => "密码库",
             Page::Audit => "操作审计",
@@ -51,6 +57,9 @@ impl Page {
         match self {
             Page::Overview => "scan-text",
             Page::Servers => "library",
+            Page::Disk => "hard-drive",
+            Page::LongJobs => "timer",
+            Page::Security => "shield",
             Page::Tasks => "list-todo",
             Page::Vault => "plug",
             Page::Audit => "history",
@@ -124,6 +133,22 @@ pub enum Cmd {
     SelectRun(String, usize),
     /// Open or close a server's panel of charts.
     OpenHost(String),
+    // ---- disk
+    DiskHost(String),
+    /// Ask before the first full scan: it reads every local filesystem as root.
+    AskFullScan(String),
+    DiskScan(String, crate::scans::Scope),
+    DiskPath(String),
+    DiskZoom(String),
+    DiskList(bool),
+    ToggleDiskFree,
+    SetDiskScan(u32),
+    // ---- long-running tasks
+    CheckLongJobs(String),
+    SetLongHours(u32),
+    // ---- security
+    ScanAttacks(String),
+    OpenAttack(String),
     // ---- vault
     AddCredential,
     EditCredential(String),
@@ -172,6 +197,8 @@ pub enum MenuKind {
     Effort(usize, usize),
     HostActions(String),
     AutoInspect,
+    DiskScan,
+    LongHours,
 }
 
 #[derive(Clone)]
@@ -216,6 +243,12 @@ pub struct Workspace {
     pub selected_run: Option<(String, usize)>,
     /// The server whose charts are open in the overview.
     pub open_host: Option<String>,
+    // ---- disk: the server on show, its scans, and where in them the reader is.
+    pub disk: crate::disk::DiskState,
+    // ---- long-running tasks and security: the hosts being checked right now, and the triage laid open.
+    pub long_working: HashSet<String>,
+    pub attack_working: HashSet<String>,
+    pub open_attack: Option<String>,
     // ---- audit
     pub audit_host: Option<String>,
     pub audit_hours: u32,
@@ -260,7 +293,7 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, open_host: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -425,6 +458,7 @@ impl Workspace {
                 breaks.push(items.len());
                 // On the servers page the row itself opens the server.
                 if self.page != Page::Servers { items.push(item(t("查看详情"), false, None, Cmd::SelectHost(Some(name.clone())))) }
+                items.push(item(t("查看磁盘占用"), false, None, Cmd::DiskHost(name.clone())));
                 items.push(item(t("查看操作审计"), false, None, Cmd::AuditHost(Some(name.clone()))));
                 if self.view.hosts.iter().any(|host| host.name == name && host.managed) {
                     breaks.push(items.len());
@@ -435,6 +469,16 @@ impl Workspace {
             MenuKind::AutoInspect => {
                 for minutes in wisp_ops_core::settings::AUTO_INSPECT {
                     items.push(item(&crate::settings::interval_label(minutes), self.settings.auto_inspect_minutes == minutes, None, Cmd::SetAutoInspect(minutes)));
+                }
+            }
+            MenuKind::DiskScan => {
+                for minutes in wisp_ops_core::settings::DISK_SCAN {
+                    items.push(item(&crate::disk::rescan_label(minutes), self.settings.disk_scan_minutes == minutes, None, Cmd::SetDiskScan(minutes)));
+                }
+            }
+            MenuKind::LongHours => {
+                for hours in wisp_ops_core::settings::LONG_JOB_HOURS {
+                    items.push(item(&crate::longrun::hours_label(hours), self.settings.long_job_hours == hours, None, Cmd::SetLongHours(hours)));
                 }
             }
         }
@@ -449,7 +493,8 @@ impl Workspace {
         match cmd {
             Cmd::SetPage(page) => {
                 self.page = page;
-                if page == Page::Audit || page == Page::Overview || page == Page::Tasks { self.reload(cx) }
+                if matches!(page, Page::Audit | Page::Overview | Page::Tasks | Page::LongJobs | Page::Security) { self.reload(cx) }
+                if page == Page::Disk { self.load_disk(cx) }
             }
             Cmd::Refresh => {
                 self.reload(cx);
@@ -513,6 +558,10 @@ impl Workspace {
                 self.run_confirmed(*cmd, window, cx);
             }
             cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
+            cmd @ (Cmd::DiskHost(_) | Cmd::AskFullScan(_) | Cmd::DiskScan(..) | Cmd::DiskPath(_) | Cmd::DiskZoom(_) | Cmd::DiskList(_) | Cmd::ToggleDiskFree) => self.run_disk(cmd, cx),
+            Cmd::CheckLongJobs(selector) => self.check_long_jobs(selector, false, cx),
+            Cmd::ScanAttacks(selector) => self.scan_attacks(selector, cx),
+            Cmd::OpenAttack(host) => self.open_attack = if self.open_attack.as_ref() == Some(&host) { None } else { Some(host) },
             Cmd::SelectRun(host, at) => {
                 self.open_host = Some(host.clone());
                 self.selected_run = if self.selected_run.as_ref() == Some(&(host.clone(), at)) { None } else { Some((host, at)) };
@@ -636,6 +685,9 @@ impl Render for Workspace {
         let page = match self.page {
             Page::Overview => self.render_overview(window, cx),
             Page::Servers => self.render_servers(window, cx),
+            Page::Disk => self.render_disk(window, cx),
+            Page::LongJobs => self.render_longrun(window, cx),
+            Page::Security => self.render_security(window, cx),
             Page::Tasks => self.render_tasks(window, cx),
             Page::Vault => self.render_vault(window, cx),
             Page::Audit => self.render_audit(window, cx),
@@ -734,6 +786,8 @@ impl Workspace {
                 .when_some(count.filter(|count| *count > 0), |d, count| d.child(div().flex_none().text_size(text_px(12.)).text_color(Theme::danger()).child(count.to_string())))
         };
         let troubled = self.view.hosts.iter().filter(|host| matches!(host.state(), "crit" | "unreachable")).count();
+        let long = self.long_jobs_shown().iter().map(|(_, jobs)| jobs.len()).sum();
+        let attacked = self.view.attacks.values().filter(|row| crate::security::worst(row) == "crit").count();
         div()
             .flex()
             .flex_col()
@@ -753,6 +807,10 @@ impl Workspace {
                     .child(div().flex().items_center().gap(px(8.)).h(ui::head_h()).px(px(8.)).child(div().flex().flex_none().items_center().justify_center().size(px(26.)).rounded(px(7.)).bg(Theme::accent()).child(ui::icon("scan-text", 15., Theme::on_accent()))).child(div().flex().flex_col().min_w_0().child(div().text_size(text_px(14.)).font_weight(FontWeight::SEMIBOLD).child("WispOps")).child(div().truncate().text_size(text_px(11.)).line_height(text_px(14.)).text_color(Theme::text_tertiary()).child(tf!("{} 台服务器", "{} servers", self.view.hosts.len())))))
                     .child(row(Page::Overview, Some(troubled), self, cx))
                     .child(row(Page::Servers, None, self, cx))
+                    .child(div().h(px(10.)))
+                    .child(row(Page::Disk, None, self, cx))
+                    .child(row(Page::LongJobs, Some(long), self, cx))
+                    .child(row(Page::Security, Some(attacked), self, cx))
                     .child(div().h(px(10.)))
                     .child(row(Page::Tasks, None, self, cx))
                     .child(row(Page::Audit, None, self, cx))
@@ -848,6 +906,9 @@ impl Workspace {
             "page" => {
                 let page = match arg {
                     "servers" => Page::Servers,
+                    "disk" => Page::Disk,
+                    "jobs" => Page::LongJobs,
+                    "security" => Page::Security,
                     "tasks" => Page::Tasks,
                     "vault" => Page::Vault,
                     "audit" => Page::Audit,
@@ -877,6 +938,16 @@ impl Workspace {
             "host-menu" => self.open_menu(MenuKind::HostActions(arg.to_string()), point(px(520.), px(260.)), cx),
             "consent" => self.run(Cmd::AnswerTools(match arg { "deny" => Consent::Deny, "grant" => Consent::Grant, "full" => Consent::Full, _ => Consent::Once }), window, cx),
             "inspect" => self.run(Cmd::InspectHosts(arg.to_string()), window, cx),
+            "disk-host" => self.run(Cmd::DiskHost(arg.to_string()), window, cx),
+            "disk-scan" => {
+                let (host, scope) = arg.split_once('/').unwrap_or((arg, "home"));
+                self.run(Cmd::DiskScan(host.to_string(), match scope { "full" => crate::scans::Scope::Full, "again" => crate::scans::Scope::Again, _ => crate::scans::Scope::Home }), window, cx);
+            }
+            "zoom" => self.run(Cmd::DiskZoom(arg.to_string()), window, cx),
+            "disk-list" => self.run(Cmd::DiskList(arg != "map"), window, cx),
+            "long-check" => self.run(Cmd::CheckLongJobs(arg.to_string()), window, cx),
+            "attack-scan" => self.run(Cmd::ScanAttacks(arg.to_string()), window, cx),
+            "open-attack" => self.run(Cmd::OpenAttack(arg.to_string()), window, cx),
             "add-host" => self.run(Cmd::AddHost, window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
             "add-credential" => self.run(Cmd::AddCredential, window, cx),

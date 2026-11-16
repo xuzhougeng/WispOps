@@ -3,6 +3,8 @@
 //! here opens a connection, reads a file or keeps state; callers run the scripts over SSH and
 //! store the snapshots.
 
+/// Failed logins by source, account and hour: the tail of the security triage the security page runs.
+pub mod attacks;
 /// Disk-full diagnosis of one path: usage, growth, open and deleted files, reclaimable caches.
 pub mod disk;
 /// Recent-file analysis with a cleanup plan ordered by reclaimable space.
@@ -11,6 +13,8 @@ pub mod files;
 pub mod inspect;
 /// Running Slurm, PBS and LSF jobs and their working directories.
 pub mod jobs;
+/// User processes and scheduler jobs that have run longer than a threshold.
+pub mod longrun;
 /// Muted findings: problems the owner acknowledged for a while.
 pub mod mutes;
 /// What sequencing and analysis files are and how long they are worth keeping.
