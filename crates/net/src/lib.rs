@@ -5,6 +5,9 @@ use std::io::{BufRead, BufReader};
 use std::time::Duration;
 use wisp_ops_core::ai::{self, ChatEvent, HttpRequest, Protocol, TurnReader};
 
+/// The WebDAV request of device sync.
+pub mod webdav;
+
 const USER_AGENT: &str = concat!("WispOps/", env!("CARGO_PKG_VERSION"));
 
 /// The proxy every request of this process goes through, from the settings.

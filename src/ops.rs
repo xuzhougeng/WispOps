@@ -398,6 +398,16 @@ impl Fleet {
         &self.root
     }
 
+    /// The vault, for device sync (`crate::sync`): it exports and replaces whole vaults.
+    pub(crate) fn vault(&self) -> &LocalVault {
+        &self.vault
+    }
+
+    /// Whether any task's timer is on: device sync refuses to import over running schedules.
+    pub(crate) fn timers_on(&self) -> bool {
+        !self.timer_state().tasks.is_empty()
+    }
+
     fn stamp(&self) -> String {
         let of = |path: PathBuf| std::fs::metadata(&path).ok().map(|meta| format!("{:?}:{}", meta.modified().ok(), meta.len())).unwrap_or_else(|| "missing".into());
         format!("{}|{}", of(self.root.join("managed.json")), self.config.inventory_file.as_ref().map(|file| of(PathBuf::from(wisp_ops_engine::fsutil::expand_home(file)))).unwrap_or_default())

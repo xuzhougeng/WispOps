@@ -46,6 +46,7 @@ cargo clippy --all-targets                       # 应当没有警告
 | 例行任务 | 把只读检查（巡检、磁盘、目录空间、新增文件、安全排查、自定义只读命令）绑到服务器上，手动或定时运行并记录；报告由助手按需读已采集的结果来写 |
 | 操作审计 | 助手、窗口、任务执行的每一条远程命令：风险、授权方式、结果 |
 | 密码库 | XChaCha20-Poly1305 加密，密钥在 macOS 钥匙串 / Windows DPAPI / `0600` 文件 |
+| 设备同步 | 设置 → 通用 → WebDAV 设备同步：把一份加密快照传到 WebDAV 文件夹（默认坚果云），在另一台设备上预览后导入。快照含界面里添加的服务器、凭据关联、权限设置、任务、任务模板（`task-templates.json`，原样携带）和整个密码库，可选服务器 `identityFile` 指定的 SSH 私钥（导入后写到 `ssh-keys/`）；上传前用同步口令以 scrypt + XChaCha20-Poly1305 加密，格式与插件相同，每次上传是新文件。不同步密码库密钥、`inventory.yml`、`config.json`、`settings.json`、审计和历史、限时授权、定时任务的开关。导入替换本机数据、不合并，先把原数据加密备份到 `sync-backups/`；预览后本机或云端有变化、或有定时任务开着时拒绝导入。手动触发，不定时同步。应用密码和同步口令用密码库的密钥加密保存在 `sync.json` |
 | 助手 | 常驻右侧。工具：`ops_hosts` `ops_inspect` `ops_exec` `ops_disk` `ops_files` `ops_security` `ops_change` `ops_task` `ops_history`，外加读技能的 `use_skill` |
 
 助手输入框里的 `/inspect`、`/disk`、`/security`、`/files`、`/history`、`/new` 是内置命令。
@@ -68,6 +69,7 @@ cargo clippy --all-targets                       # 应当没有警告
 - `managed.json`：在界面里添加的服务器、凭据关联、权限覆盖、任务
 - `config.json`：可选，覆盖默认配置（`defaultPolicy`、`denyPatterns`、`ssh.*`、`limits.*`、`thresholds.*` 等）
 - `vault.json`、`audit/`、`inspections/`、`tasks/`、`conversations/` 等
+- `sync.json`（WebDAV 设备同步的设置，密码已加密）、`sync-backups/`、`ssh-keys/`、`task-templates.json`：用了设备同步才有
 
 模型服务和外观在 `settings.json`（macOS：`~/Library/Application Support/WispOps/`），API Key 明文保存、权限 `0600`。
 
@@ -83,4 +85,4 @@ cargo clippy --all-targets                       # 应当没有警告
 
 ## 相对插件没有做的
 
-检查脚本库与草稿（`ops_script_draft`、`ops_template_draft`）、任务模板库、外部 webhook 通知、WebDAV 设备同步、WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）、cron 调度、自动更新。
+检查脚本库与草稿（`ops_script_draft`、`ops_template_draft`）、任务模板库、外部 webhook 通知、WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）、cron 调度、自动更新。
