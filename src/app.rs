@@ -127,6 +127,8 @@ pub enum Cmd {
     SetPolicy(&'static str, &'static str),
     BindCredential(String, bool),
     PickCredential(String),
+    /// In the bind dialog: write a new credential, stored and linked by 保存.
+    BindNewCredential,
     TestCredential,
     HostSearchChanged,
     // ---- overview
@@ -460,6 +462,9 @@ impl Workspace {
                 if self.page != Page::Servers { items.push(item(t("查看详情"), false, None, Cmd::SelectHost(Some(name.clone())))) }
                 items.push(item(t("查看磁盘占用"), false, None, Cmd::DiskHost(name.clone())));
                 items.push(item(t("查看操作审计"), false, None, Cmd::AuditHost(Some(name.clone()))));
+                breaks.push(items.len());
+                items.push(item(t("配置普通用户…"), false, None, Cmd::BindCredential(name.clone(), false)));
+                items.push(item(t("配置 sudoer…"), false, None, Cmd::BindCredential(name.clone(), true)));
                 if self.view.hosts.iter().any(|host| host.name == name && host.managed) {
                     breaks.push(items.len());
                     items.push(item(t("编辑服务器"), false, None, Cmd::EditHost(name.clone())));
@@ -557,7 +562,7 @@ impl Workspace {
                 self.modal = None;
                 self.run_confirmed(*cmd, window, cx);
             }
-            cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
+            cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::BindNewCredential | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
             cmd @ (Cmd::DiskHost(_) | Cmd::AskFullScan(_) | Cmd::DiskScan(..) | Cmd::DiskPath(_) | Cmd::DiskZoom(_) | Cmd::DiskList(_) | Cmd::ToggleDiskFree) => self.run_disk(cmd, cx),
             Cmd::CheckLongJobs(selector) => self.check_long_jobs(selector, false, cx),
             Cmd::ScanAttacks(selector) => self.scan_attacks(selector, cx),
@@ -952,6 +957,11 @@ impl Workspace {
             "add-task" => self.run(Cmd::AddTask, window, cx),
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),
+            // The credential dialog of a server: `bind:web-01` for its login, `bind-sudo:web-01`; `bind-new` writes a new one.
+            "bind" | "bind-sudo" => self.run(Cmd::BindCredential(arg.to_string(), name == "bind-sudo"), window, cx),
+            "bind-new" => self.run(Cmd::BindNewCredential, window, cx),
+            // The dialog's button: Enter in a field needs the window to be the active one.
+            "submit" => self.run(Cmd::SubmitModal, window, cx),
             "history" => self.run(Cmd::ToggleHistory, window, cx),
             "tab" => self.run(Cmd::SetSettingsTab(match arg { "general" => crate::settings::Tab::General, "skills" => crate::settings::Tab::Skills, _ => crate::settings::Tab::Models }), window, cx),
             "shot" => {
