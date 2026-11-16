@@ -47,12 +47,12 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .size_full()
-                .child(self.page_head(t("机群总览"), t("每台服务器最近的巡检"), vec![]))
+                .child(self.page_head(t("机群总览"), t("每台服务器最近的巡检"), vec![], cx))
                 .child(ui::empty_state("scan-text", t("清单里还没有服务器"), t("先在「服务器」里添加，或从 ~/.ssh/config 导入。")).child(ui::primary_button("overview-add", t("去添加服务器")).on_click(self.on(Cmd::SetPage(Page::Servers), cx))))
                 .into_any_element();
         }
         // The page's own width: the window less the sidebar and the assistant.
-        let inner = f32::from(window.viewport_size().width) - SIDEBAR_W - if self.settings.chat_hidden { 0. } else { self.chat_width() } - 82.;
+        let inner = f32::from(window.viewport_size().width) - SIDEBAR_W - if self.settings.chat_hidden { 0. } else { self.chat_width() } - 122.;
         let room = Room { squares: if inner >= 900. { RUNS_SHOWN } else if inner >= 600. { 12 } else { 0 }, memory: inner >= 600., load: inner >= 750. };
 
         let total = hosts.len().max(1) as f32;
@@ -120,7 +120,9 @@ impl Workspace {
             .child(label("磁盘（最满的挂载点）").flex_none().w(px(190.)).truncate())
             .when(room.memory, |d| d.child(label("内存已用").flex_none().w(px(120.))))
             .when(room.load, |d| d.child(label("负载 · GPU").flex_none().w(px(124.))))
-            .child(div().flex_none().w(px(24.)));
+            // Under these: the inspect button and the menu's.
+            .child(div().flex_none().w(px(24.)))
+            .child(div().flex_none().w(px(28.)));
         let fleet = ui::panel()
             .child(div().px(px(16.)).pt(px(12.)).pb(px(6.)).child(ui::panel_head(t("服务器").to_string(), t("点一行展开磁盘、内存、负载和 GPU 的变化").to_string())))
             .child(columns)
@@ -129,7 +131,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .size_full()
-            .child(self.page_head(t("机群总览"), t("每台服务器最近的巡检；点一行看各项指标的变化"), actions))
+            .child(self.page_head(t("机群总览"), t("每台服务器最近的巡检；点一行看各项指标的变化"), actions, cx))
             .child(
                 div()
                     .id("overview-body")
@@ -207,6 +209,7 @@ impl Workspace {
                     .hover(|s| s.bg(Theme::hover()))
                     .when(last && !open, |d| d.rounded_b(px(12.)))
                     .on_click(self.on(Cmd::OpenHost(host.name.clone()), cx))
+                    .on_mouse_down(MouseButton::Right, self.on_context(MenuKind::HostActions(host.name.clone()), cx))
                     .child(ui::icon(if open { "chevron-down" } else { "chevron-right" }, 14., Theme::text_tertiary()))
                     .child(if working { ui::spinner(SharedString::from(format!("overview-working-{}", host.name)), 12., Theme::accent()).into_any_element() } else { div().flex_none().size(px(9.)).m(px(1.5)).rounded_full().bg(state_color(host.state())).into_any_element() })
                     .child(div().flex().flex_col().flex_1().min_w(px(110.)).child(div().truncate().font_weight(FontWeight::MEDIUM).child(host.name.clone())).child(div().truncate().text_size(text_px(11.)).line_height(text_px(15.)).text_color(Theme::text_tertiary()).child(about)))
@@ -214,7 +217,14 @@ impl Workspace {
                     .child(disk.flex_none().w(px(190.)))
                     .when(room.memory, |d| d.child(memory.flex_none().w(px(120.))))
                     .when(room.load, |d| d.child(load.flex_none().w(px(124.)).overflow_hidden()))
-                    .child(ui::icon_action(SharedString::from(format!("overview-inspect-{}", host.name)), "loader", Theme::text_tertiary(), t("立即巡检")).on_click(self.on_within(Cmd::InspectHosts(host.name.clone()), cx))),
+                    .child(ui::icon_action(SharedString::from(format!("overview-inspect-{}", host.name)), "loader", Theme::text_tertiary(), t("立即巡检")).on_click(self.on_within(Cmd::InspectHosts(host.name.clone()), cx)))
+                    .child(ui::ghost_button(SharedString::from(format!("overview-menu-{}", host.name)), Some("ellipsis"), None).on_click({
+                        let open = self.on_menu(MenuKind::HostActions(host.name.clone()), cx);
+                        move |ev, window, cx| {
+                            cx.stop_propagation();
+                            open(ev, window, cx);
+                        }
+                    })),
             )
             .when(open, |d| d.child(self.render_host_charts(host, picked, cores, cx)))
             .into_any_element()

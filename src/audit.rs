@@ -61,6 +61,6 @@ impl Workspace {
             }));
             div().flex().flex_col().flex_1().min_h_0().child(head).child(list).into_any_element()
         };
-        div().flex().flex_col().size_full().child(self.page_head(t("操作审计"), tf!("最近的 {} 条远程命令：谁执行的、风险、怎么授权的、结果如何", "The latest {} remote commands: who ran them, their risk, how they were authorized, how they ended", rows.len()), actions)).child(body).into_any_element()
+        div().flex().flex_col().size_full().child(self.page_head(t("操作审计"), tf!("最近的 {} 条远程命令：谁执行的、风险、怎么授权的、结果如何", "The latest {} remote commands: who ran them, their risk, how they were authorized, how they ended", rows.len()), actions, cx)).child(body).into_any_element()
     }
 }

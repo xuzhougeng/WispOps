@@ -89,6 +89,8 @@ pub enum Cmd {
     Suggest(String),
     /// Put a request in the box for the person to finish.
     Draft(String),
+    /// Open the assistant with the caret in its box, leaving what is written there.
+    FocusChat,
     PickSlash(usize),
     AnswerTools(Consent),
     /// Warn about full permission before giving it.
@@ -288,6 +290,14 @@ impl Workspace {
         cx.listener(move |this, ev: &ClickEvent, _, cx| this.open_menu(kind.clone(), ev.position(), cx))
     }
 
+    /// The same menus under the right button, on a row that is a server.
+    pub fn on_context(&self, kind: MenuKind, cx: &mut Context<Self>) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+        cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+            cx.stop_propagation();
+            this.open_menu(kind.clone(), ev.position, cx)
+        })
+    }
+
     pub fn say(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.show_toast(message.into(), false, cx);
     }
@@ -409,8 +419,12 @@ impl Workspace {
                 items.push(item(t("巡检"), false, None, Cmd::InspectHosts(name.clone())));
                 items.push(item(t("探测能力"), false, None, Cmd::ProbeHost(name.clone())));
                 breaks.push(items.len());
+                items.push(item(t("让助手汇报状态"), false, None, Cmd::Suggest(format!("/inspect {name}"))));
                 items.push(item(t("让助手诊断磁盘"), false, None, Cmd::Draft(format!("/disk {name} /"))));
                 items.push(item(t("让助手做安全排查"), false, None, Cmd::Suggest(format!("/security {name}"))));
+                breaks.push(items.len());
+                // On the servers page the row itself opens the server.
+                if self.page != Page::Servers { items.push(item(t("查看详情"), false, None, Cmd::SelectHost(Some(name.clone())))) }
                 items.push(item(t("查看操作审计"), false, None, Cmd::AuditHost(Some(name.clone()))));
                 if self.view.hosts.iter().any(|host| host.name == name && host.managed) {
                     breaks.push(items.len());
@@ -460,6 +474,11 @@ impl Workspace {
                     input.set_text(&text, cx);
                     input.focus(window);
                 });
+            }
+            Cmd::FocusChat => {
+                self.show_chat(cx);
+                self.chat.history = None;
+                self.chat.input.update(cx, |input, _| input.focus(window));
             }
             Cmd::PickSlash(at) => self.pick_slash(at, cx),
             Cmd::AnswerTools(consent) => self.answer_tools(consent, cx),
@@ -737,6 +756,9 @@ impl Workspace {
                     .child(div().h(px(10.)))
                     .child(row(Page::Tasks, None, self, cx))
                     .child(row(Page::Audit, None, self, cx))
+                    .child(div().h(px(10.)))
+                    // Not a page: the assistant beside whichever page is open.
+                    .child(div().id("nav-assistant").flex().items_center().gap(px(9.)).h(text_px(32.)).px(px(10.)).rounded(px(7.)).cursor_pointer().hover(|s| s.bg(Theme::hover())).on_click(self.on(Cmd::FocusChat, cx)).child(ui::icon("message-square", 15., Theme::text_secondary())).child(div().flex_1().min_w_0().truncate().child(t("助手"))))
                     .child(div().flex_1())
                     .child(div().h(px(1.)).mx(px(6.)).my(px(6.)).bg(Theme::line()))
                     .child(row(Page::Vault, None, self, cx))
@@ -788,12 +810,14 @@ impl Workspace {
     }
 
     /// A page's header: its title, a line of what it is, and its actions at the right.
-    pub fn page_head(&self, title: &str, about: impl Into<SharedString>, actions: Vec<AnyElement>) -> Div {
+    /// With the assistant folded away, the way back to it stands last, where its panel's head was.
+    pub fn page_head(&self, title: &str, about: impl Into<SharedString>, actions: Vec<AnyElement>, cx: &mut Context<Self>) -> Div {
         ui::column_head()
             .px(px(24.))
             .gap(px(8.))
             .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().text_size(text_px(ui::HEAD_TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string())).child(div().truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_tertiary()).child(about.into())))
             .children(actions)
+            .when(self.settings.chat_hidden, |d| d.child(ui::ghost_button("open-assistant", Some("message-square"), Some(t("助手").into())).tooltip(ui::tip(t("打开助手"))).on_click(self.on(Cmd::FocusChat, cx))))
     }
 }
 
@@ -848,6 +872,9 @@ impl Workspace {
                 Ok(keystroke) => window.defer(cx, move |window, cx| _ = window.dispatch_keystroke(keystroke, cx)),
                 Err(_) => eprintln!("dev: not a key {arg}"),
             },
+            "assistant" => self.run(Cmd::FocusChat, window, cx),
+            "toggle-chat" => self.run(Cmd::ToggleChat, window, cx),
+            "host-menu" => self.open_menu(MenuKind::HostActions(arg.to_string()), point(px(520.), px(260.)), cx),
             "consent" => self.run(Cmd::AnswerTools(match arg { "deny" => Consent::Deny, "grant" => Consent::Grant, "full" => Consent::Full, _ => Consent::Once }), window, cx),
             "inspect" => self.run(Cmd::InspectHosts(arg.to_string()), window, cx),
             "add-host" => self.run(Cmd::AddHost, window, cx),

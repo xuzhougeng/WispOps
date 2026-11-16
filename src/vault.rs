@@ -108,6 +108,6 @@ impl Workspace {
                 }))
                 .into_any_element()
         };
-        div().flex().flex_col().size_full().child(self.page_head(t("密码库"), tf!("加密保存在本机；密钥在{}。密码只交给 SSH，不回显，也不给模型", "Encrypted on this computer; the key is in {}. Passwords go to SSH only, never shown and never given to the model", t(self.view.vault_key_place)), actions)).when_some(self.view.vault_error.as_ref(), |d, error| d.child(div().px(px(24.)).pt(px(10.)).child(ui::error_line(error)))).child(body).into_any_element()
+        div().flex().flex_col().size_full().child(self.page_head(t("密码库"), tf!("加密保存在本机；密钥在{}。密码只交给 SSH，不回显，也不给模型", "Encrypted on this computer; the key is in {}. Passwords go to SSH only, never shown and never given to the model", t(self.view.vault_key_place)), actions, cx)).when_some(self.view.vault_error.as_ref(), |d, error| d.child(div().px(px(24.)).pt(px(10.)).child(ui::error_line(error)))).child(body).into_any_element()
     }
 }

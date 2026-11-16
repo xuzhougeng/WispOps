@@ -252,6 +252,6 @@ impl Workspace {
                 }))
                 .into_any_element()
         };
-        div().flex().flex_col().size_full().child(self.page_head(t("例行任务"), t("按时运行的只读检查：采集和记录不消耗模型，报告由助手按需来写"), actions)).child(body).into_any_element()
+        div().flex().flex_col().size_full().child(self.page_head(t("例行任务"), t("按时运行的只读检查：采集和记录不消耗模型，报告由助手按需来写"), actions, cx)).child(body).into_any_element()
     }
 }
