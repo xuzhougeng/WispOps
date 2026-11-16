@@ -82,6 +82,8 @@ pub struct TaskForm {
     pub daily: Entity<TextInput>,
     pub every: Entity<TextInput>,
     pub sudo: bool,
+    /// The check script of the `script` playbook.
+    pub script: String,
 }
 
 pub enum Modal {
@@ -104,7 +106,7 @@ impl Modal {
         match self {
             Modal::Host(HostForm { editing: _, name, address, user, port, groups, jump, identity, description }) => vec![name, groups, address, user, port, jump, identity, description],
             Modal::Credential(form) | Modal::Bind(BindForm { new: Some(form), .. }) => form.inputs(),
-            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, sudo: _ }) => vec![name, description, targets, paths, commands, instruction, daily, every],
+            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, sudo: _, script: _ }) => vec![name, description, targets, paths, commands, instruction, daily, every],
             Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _, new: None }) | Modal::Import(ImportForm { rows: _ }) => vec![],
             Modal::Confirm { .. } | Modal::Text { .. } => vec![],
         }

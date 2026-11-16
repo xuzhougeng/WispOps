@@ -179,6 +179,8 @@ pub enum Cmd {
     PickPlaybook(&'static str),
     PickSchedule(&'static str),
     ToggleTaskSudo,
+    /// The check-script library and its drafts (`scripts.rs`).
+    Scripts(crate::scripts::ScriptCmd),
     // ---- audit
     AuditHost(Option<String>),
     AuditRange(u32),
@@ -278,6 +280,7 @@ pub struct Workspace {
     pub audit_hours: u32,
     // ---- tasks: the tasks running from the window right now.
     pub running_tasks: HashSet<String>,
+    pub scripts: crate::scripts::ScriptsState,
     pub modal: Option<Modal>,
     pub modal_error: String,
     pub modal_busy: bool,
@@ -318,7 +321,7 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -616,6 +619,7 @@ impl Workspace {
             }
             cmd @ (Cmd::AddCredential | Cmd::EditCredential(_) | Cmd::DeleteCredential(_) | Cmd::ToggleAgentUse) => self.run_vault(cmd, window, cx),
             cmd @ (Cmd::AddTask | Cmd::EditTask(_) | Cmd::DeleteTask(_) | Cmd::RunTask(_) | Cmd::ToggleTask(_) | Cmd::PickPlaybook(_) | Cmd::PickSchedule(_) | Cmd::ToggleTaskSudo) => self.run_tasks(cmd, window, cx),
+            Cmd::Scripts(cmd) => self.run_scripts(cmd, window, cx),
             Cmd::AuditHost(host) => {
                 self.audit_host = host;
                 self.page = Page::Audit;
@@ -1020,6 +1024,10 @@ impl Workspace {
             "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
             "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
+            // The 检查脚本 tab of 例行任务, a script or draft laid open (`script-open:draft:<id>`), a script as a new task.
+            "scripts" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::Tab(arg != "off")), window, cx),
+            "script-open" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::Open(arg.to_string())), window, cx),
+            "use-script" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::UseInTask(arg.to_string())), window, cx),
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),
             // The credential dialog of a server: `bind:web-01` for its login, `bind-sudo:web-01`; `bind-new` writes a new one.

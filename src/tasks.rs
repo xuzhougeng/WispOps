@@ -14,13 +14,14 @@ use gpui::{prelude::FluentBuilder, *};
 use wisp_ops_core::time;
 
 /// The playbooks a task of the window can run, and what each is called.
-pub const PLAYBOOKS: [(&str, &str, &str); 6] = [
+pub const PLAYBOOKS: [(&str, &str, &str); 7] = [
     ("inspect", "健康巡检", "负载、内存、磁盘、失败的服务、GPU、作业队列"),
     ("disk", "磁盘诊断", "大目录和大文件、是否被占用、可回收的缓存"),
     ("space", "目录空间占用", "逐层统计目录大小，与上次比较增长"),
     ("new-files", "新增文件分析", "最近新增的文件：多少、在哪、是谁的、是什么"),
     ("security", "安全排查", "SSH 暴力破解、可疑进程和外连、异常账户"),
     ("custom", "自定义命令", "在每台服务器上执行你写的只读命令"),
+    ("script", "检查脚本", "运行脚本库里你接受的检查脚本，按退出码判断"),
 ];
 
 pub fn playbook_label(key: &str) -> &'static str {
@@ -51,8 +52,13 @@ impl Workspace {
     }
 
     fn task_dialog(&mut self, editing: Option<String>, cx: &mut Context<Self>) {
-        self.modal_subscriptions.clear();
         let known = editing.as_ref().and_then(|name| self.view.tasks.iter().find(|task| &task.name == name)).map(|task| task.draft.clone()).unwrap_or_else(|| TaskDraft { playbook: "inspect".into(), targets: "all".into(), daily: "08:30".into(), every_minutes: 60, schedule: "daily".into(), ..Default::default() });
+        self.task_dialog_with(editing, known, cx);
+    }
+
+    /// The task dialog filled from `known` (a check script's 用作例行任务 starts one this way).
+    pub fn task_dialog_with(&mut self, editing: Option<String>, known: TaskDraft, cx: &mut Context<Self>) {
+        self.modal_subscriptions.clear();
         let form = TaskForm {
             name: self.modal_input("morning-check", &known.name, false, cx),
             description: self.modal_input("每天早上看一眼", &known.description, false, cx),
@@ -65,6 +71,7 @@ impl Workspace {
             daily: self.modal_input("08:30", &known.daily, false, cx),
             every: self.modal_input("60", &known.every_minutes.to_string(), false, cx),
             sudo: known.sudo,
+            script: known.script.clone(),
             editing,
         };
         self.open_modal(Modal::Task(form), cx);
@@ -86,6 +93,7 @@ impl Workspace {
             daily: read(&form.daily),
             every_minutes: if form.schedule == "every" { every.parse::<u32>().ok().filter(|minutes| *minutes > 0).ok_or_else(|| t("间隔应是大于 0 的分钟数。").to_string())? } else { 60 },
             sudo: form.sudo,
+            script: if form.playbook == "script" { form.script.clone() } else { String::new() },
         };
         self.fleet.save_task(form.editing.as_deref(), draft)?;
         self.reload(cx);
@@ -162,6 +170,7 @@ impl Workspace {
             .child(field("服务器（选择器）", &form.targets, window, cx))
             .child(ui::form_row(t("检查内容").to_string(), playbooks))
             .when(wants_paths, |d| d.child(field("路径（逗号分隔）", &form.paths, window, cx)))
+            .when(form.playbook == "script", |d| d.child(ui::form_row(t("检查脚本").to_string(), self.script_choices(&form.script, cx))))
             .child(field(if form.playbook == "custom" { "只读命令（每行一条）" } else { "附加的只读命令（可选，每行一条）" }, &form.commands, window, cx))
             .child(field("报告要求（助手汇报时照此写）", &form.instruction, window, cx))
             .child(div().flex().items_end().gap(px(12.)).child(ui::form_row(t("运行时间").to_string(), schedules)).when(form.schedule == "daily", |d| d.child(div().w(px(100.)).child(ui::field(&form.daily, window, cx)))).when(form.schedule == "every", |d| d.child(div().w(px(100.)).child(ui::field(&form.every, window, cx))).child(div().pb(px(8.)).text_color(Theme::text_tertiary()).child(t("分钟")))))
@@ -180,8 +189,9 @@ impl Workspace {
         (if form.editing.is_some() { t("编辑例行任务").to_string() } else { t("新建例行任务").to_string() }, 620., body, Some(t("保存").to_string()), false)
     }
 
-    pub fn render_tasks(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let actions = vec![ui::primary_button("task-add", t("新建任务")).child(ui::icon("plus", 14., Theme::on_accent())).on_click(self.on(Cmd::AddTask, cx)).into_any_element()];
+    pub fn render_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.scripts.tab { return self.render_scripts(window, cx) }
+        let actions = vec![self.tasks_tabs(cx), ui::primary_button("task-add", t("新建任务")).child(ui::icon("plus", 14., Theme::on_accent())).on_click(self.on(Cmd::AddTask, cx)).into_any_element()];
         let body: AnyElement = if self.view.tasks.is_empty() {
             ui::empty_state("list-todo", t("还没有例行任务"), t("例行任务把一项只读检查（巡检、磁盘、新增文件、安全排查，或你写的只读命令）绑到一些服务器上，按时运行并记录。正常的运行不消耗模型；想看报告时再让助手读已经采集的结果。")).child(ui::primary_button("task-empty-add", t("新建任务")).on_click(self.on(Cmd::AddTask, cx))).into_any_element()
         } else {

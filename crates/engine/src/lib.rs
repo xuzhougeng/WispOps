@@ -5,6 +5,8 @@
 
 /// Managed changes: backup → apply → verify → rollback as one remote shell transaction.
 pub mod change;
+/// Owner-reviewed check scripts, the model's drafts of them, and their output contract.
+pub mod check_scripts;
 /// Configuration types, defaults and validation.
 pub mod config;
 /// Connection diagnosis (DNS, TCP, SSH banner) without logging in.

@@ -172,6 +172,8 @@ pub struct TaskDraft {
     pub daily: String,
     pub every_minutes: u32,
     pub sudo: bool,
+    /// The check script of the `script` playbook, from the library.
+    pub script: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -243,6 +245,8 @@ pub struct View {
     pub vault_error: Option<String>,
     pub vault_key_place: &'static str,
     pub limits: Limits,
+    /// The check-script library and the drafts waiting for review.
+    pub scripts: crate::check_scripts::ScriptsView,
 }
 
 /// The thresholds the meters and charts are coloured by: (warning, critical).
@@ -377,7 +381,7 @@ impl Fleet {
         Fleet::open_keyed(root, std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file"))
     }
 
-    fn open_keyed(root: &Path, file_key: bool) -> Fleet {
+    pub(crate) fn open_keyed(root: &Path, file_key: bool) -> Fleet {
         let _ = std::fs::create_dir_all(root);
         let mut overrides = std::fs::read_to_string(root.join("config.json")).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok()).filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
         overrides["dataDir"] = Value::String(root.to_string_lossy().into_owned());
@@ -765,7 +769,7 @@ impl Fleet {
             TaskView { name: task.name.clone(), draft: draft_of(task), managed: loaded.managed_tasks.contains(&task.name), scheduled: timed.is_some(), enabled: entry.is_some(), when: describe_when(task.schedule.as_ref()), next, last: last.map(|record| TaskLast { at: record.at.clone(), problems: record.has_problems(), summary: record.summary() }), error: entry.and_then(|entry| entry.last_error.clone()) }
         }).collect();
         let limits = Limits { gpu_temp: self.thresholds.gpu_temp_warn_c, disk: (self.thresholds.disk_warn_pct, self.thresholds.disk_crit_pct), mem_avail: (self.thresholds.mem_avail_warn_pct, self.thresholds.mem_avail_crit_pct), load_per_core: (self.thresholds.load_per_core_warn, self.thresholds.load_per_core_crit) };
-        View { limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" } }
+        View { limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" }, scripts: self.scripts_view() }
     }
 
     pub fn audit(&self, host: Option<&str>, hours: u32, limit: usize) -> Vec<AuditRow> {
@@ -959,13 +963,21 @@ impl Fleet {
         };
         if playbook == Playbook::Custom && draft.commands.is_empty() { return Err("自定义任务至少写一条只读命令。".into()) }
         if matches!(playbook, Playbook::Disk | Playbook::Space | Playbook::NewFiles) && draft.paths.is_empty() { return Err("这种检查需要填写路径。".into()) }
+        // A check script must be one a person accepted into the library, and still pass the checks.
+        let script = if playbook == Playbook::Script {
+            let script = self.library_script(&draft.script)?.ok_or("请选择检查脚本库里已接受的脚本。")?;
+            if let Some(reason) = wisp_ops_engine::check_scripts::script_refusal(&script.content, &self.extra_read, &self.deny) { return Err(format!("这个检查脚本现在不能运行：{reason}")) }
+            Some(script.id)
+        } else {
+            None
+        };
         for command in &draft.commands {
             let risk = risk::classify_command(command, &self.extra_read);
             if risk.level != RiskLevel::Read || risk.elevates { return Err(format!("这条命令不是只读的，任务里不能用：{command}{}", if risk.reasons.is_empty() { String::new() } else { format!("（{}）", risk.reasons.join("; ")) })) }
             if let Some(pattern) = self.deny.matches(command) { return Err(format!("这条命令被拒绝清单拦下（{pattern}）：{command}")) }
         }
         // A timed task of the window runs on its timer and the assistant reports when asked.
-        let spec = TaskSpec { name: draft.name.clone(), description: some(draft.description), targets: draft.targets, playbook, instruction: some(draft.instruction), schedule, paths: draft.paths, commands: draft.commands, sudo: draft.sudo.then_some(true), report: Some(config::ReportMode::Problems), ..Default::default() };
+        let spec = TaskSpec { name: draft.name.clone(), description: some(draft.description), targets: draft.targets, playbook, instruction: some(draft.instruction), schedule, paths: draft.paths, commands: draft.commands, sudo: draft.sudo.then_some(true), report: Some(config::ReportMode::Problems), script, ..Default::default() };
         config::validate_task(&spec)?;
         let exists = self.inventory().task(&spec.name).is_some();
         let (name, timed) = (spec.name.clone(), spec.schedule.is_some());
@@ -1121,8 +1133,9 @@ impl Fleet {
                 format!("No built-in collector: gather the evidence yourself with read-only ops_exec / ops_inspect calls on {}.", hosts.iter().map(|host| host.name.as_str()).collect::<Vec<_>>().join(", "))
             }
             Playbook::Script => {
-                bump("incomplete", 1.);
-                "Check scripts are not supported in this build; nothing ran.".to_string()
+                let (text, verdicts) = self.run_script_task(task, &hosts, &collect)?;
+                for (key, count) in verdicts { bump(key, count) }
+                text
             }
         };
         // The task's own read-only commands, checked when the task was saved, run after the collector.
@@ -1201,6 +1214,7 @@ fn draft_of(task: &TaskSpec) -> TaskDraft {
         daily: schedule.and_then(|schedule| schedule.daily.clone()).unwrap_or_else(|| "08:30".into()),
         every_minutes: schedule.and_then(|schedule| schedule.every_minutes).unwrap_or(60) as u32,
         sudo: task.sudo == Some(true),
+        script: task.script.clone().unwrap_or_default(),
     }
 }
 

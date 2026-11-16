@@ -44,9 +44,10 @@ cargo clippy --all-targets                       # 应当没有警告
 | 长时任务 | 各服务器上运行超过阈值（默认 24 小时）的用户进程和 Slurm 作业：谁的、跑了多久、CPU 和内存、是否空闲或已暂停；登录 shell、tmux 这类会话进程不算 |
 | 安全 | 最近 24 小时的登录攻击：失败次数、来源地址、尝试的账号、逐小时分布，以及成功登录和其他可疑迹象；认证日志要 root 才能读，能用 root 的服务器自动用 |
 | 例行任务 | 把只读检查（巡检、磁盘、目录空间、新增文件、安全排查、自定义只读命令）绑到服务器上，手动或定时运行并记录；报告由助手按需读已采集的结果来写 |
+| 检查脚本 | 例行任务页的第二个标签：助手用 `ops_script_draft` 起草只读的 shell 检查脚本，你读过全文并接受后进入脚本库，才能被例行任务运行（按退出码判断正常 / 警告 / 严重，第一行输出是摘要）。起草、接受、每次运行都按与助手相同的分类器和拒绝清单校验，脚本里不能有 sudo |
 | 操作审计 | 助手、窗口、任务执行的每一条远程命令：风险、授权方式、结果 |
 | 密码库 | XChaCha20-Poly1305 加密，密钥在 macOS 钥匙串 / Windows DPAPI / `0600` 文件 |
-| 助手 | 常驻右侧。工具：`ops_hosts` `ops_inspect` `ops_exec` `ops_disk` `ops_files` `ops_security` `ops_change` `ops_task` `ops_history`，外加读技能的 `use_skill` |
+| 助手 | 常驻右侧。工具：`ops_hosts` `ops_inspect` `ops_exec` `ops_disk` `ops_files` `ops_security` `ops_change` `ops_task` `ops_history` `ops_script_draft`，外加读技能的 `use_skill` |
 
 助手输入框里的 `/inspect`、`/disk`、`/security`、`/files`、`/history`、`/new` 是内置命令。
 
@@ -83,4 +84,4 @@ cargo clippy --all-targets                       # 应当没有警告
 
 ## 相对插件没有做的
 
-检查脚本库与草稿（`ops_script_draft`、`ops_template_draft`）、任务模板库、外部 webhook 通知、WebDAV 设备同步、WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）、cron 调度、自动更新。
+任务模板草稿（`ops_template_draft`）、任务模板库、外部 webhook 通知、WebDAV 设备同步、WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）、cron 调度、自动更新。
