@@ -209,7 +209,7 @@ impl Workspace {
     }
 
     /// A titled block of the page.
-    fn section(title: &str, about: &str) -> Div {
+    pub fn section(title: &str, about: &str) -> Div {
         div().flex().flex_col().gap(px(10.)).child(div().flex().flex_col().child(div().font_weight(FontWeight::MEDIUM).child(title.to_string())).when(!about.is_empty(), |d| d.child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(about.to_string()))))
     }
 
@@ -322,6 +322,7 @@ impl Workspace {
                 Self::section(t("数据"), t("清单、密码库、操作审计、巡检历史和对话都在这个文件夹里。清单文件 inventory.yml 可以手写，保存后下一次操作即生效。"))
                     .child(div().flex().items_center().gap(px(10.)).child(div().flex_1().min_w_0().truncate().font_family(theme::MONO_FONT).text_size(text_px(12.)).text_color(Theme::text_secondary()).child(self.fleet.data_dir().display().to_string())).child(ui::secondary_button("reveal-data", t("打开文件夹")).h(text_px(28.)).on_click(self.on(Cmd::RevealData, cx)))),
             )
+            .child(self.render_update_section(cx))
             .child(div().text_size(text_px(12.)).text_color(Theme::text_placeholder()).child(format!("WispOps {}", env!("CARGO_PKG_VERSION"))))
             .into_any_element()
     }

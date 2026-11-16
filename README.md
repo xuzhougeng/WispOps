@@ -19,6 +19,12 @@ AI 原生的服务器运维桌面工具，用 Rust + GPUI 写成。一份 SSH �
 
 0.1 没有代码签名：macOS 第一次打开如果提示无法验证开发者或文件已损坏，执行 `xattr -cr /Applications/WispOps.app`；Windows 出现「Windows 已保护你的电脑」时点「更多信息」→「仍要运行」。
 
+### 检查更新
+
+「设置 › 通用 › 更新」：默认在启动时向 GitHub 查询本仓库最新的正式发布（`releases/latest`，忽略草稿和预发布版本），之后每天最多一次；也可以关掉，或点「立即检查」。请求走设置里的全局代理，只带 `WispOps/<版本>` 这个 User-Agent，没有任何个人信息或遥测。结果和检查时间记在数据文件夹的 `updates.json`；检查失败只记下来、在设置里显示，不反复弹提示。
+
+有新版本时，侧栏「设置」上方出现一条可以关掉的提示，设置里显示版本、发布说明的链接和「下载并校验」：把本平台的安装包（上表中的文件）下载到「下载」文件夹，按发布里的 `SHA256SUMS` 校验，校验通过就在访达 / 资源管理器 / 文件管理器里显示出来；校验不通过的文件会被删除并报告，发布里没有 `SHA256SUMS` 就不下载。因为安装包没有签名，WispOps 不会替换正在运行的程序，也不会打开或运行下载的文件：退出后由你自己安装。没有现成安装包的平台（如 Linux / Windows 的 ARM）只给发布页面的链接。
+
 ## 从源码运行
 
 需要 Rust（版本见 `rust-toolchain.toml`，rustup 会自动安装）；Windows 上还需要 MSVC 构建工具，Linux 上的系统库见 `scripts/linux-build-deps.sh`。
@@ -83,4 +89,4 @@ cargo clippy --all-targets                       # 应当没有警告
 
 ## 相对插件没有做的
 
-检查脚本库与草稿（`ops_script_draft`、`ops_template_draft`）、任务模板库、外部 webhook 通知、WebDAV 设备同步、WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）、cron 调度、自动更新。
+检查脚本库与草稿（`ops_script_draft`、`ops_template_draft`）、任务模板库、外部 webhook 通知、WebDAV 设备同步、WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）、cron 调度。

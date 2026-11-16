@@ -53,12 +53,14 @@ pub struct Settings {
     pub disk_scan_minutes: u32,
     /// A user's task counts as long-running after this many hours.
     pub long_job_hours: u32,
+    /// Ask GitHub for a newer release at start and at most once a day.
+    pub auto_update_check: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         let providers = provider::DEFAULT_PRESETS.iter().filter_map(|key| provider::preset(key)).map(Provider::from_preset).collect();
-        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24 };
+        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24, auto_update_check: true };
         settings.tidy();
         settings
     }

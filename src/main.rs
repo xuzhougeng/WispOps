@@ -29,6 +29,8 @@ mod tasks;
 mod theme;
 mod tools;
 mod ui;
+mod updates;
+mod updates_view;
 mod vault;
 
 use gpui::*;

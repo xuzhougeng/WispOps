@@ -1,0 +1,133 @@
+{
+  "url": "https://api.github.com/repos/xuzhougeng/WispOps/releases/200",
+  "assets_url": "https://api.github.com/repos/xuzhougeng/WispOps/releases/200/assets",
+  "upload_url": "https://uploads.github.com/repos/xuzhougeng/WispOps/releases/200/assets{?name,label}",
+  "html_url": "https://github.com/xuzhougeng/WispOps/releases/tag/v0.3.0",
+  "id": 200,
+  "author": {
+    "login": "github-actions[bot]",
+    "id": 41898282,
+    "type": "Bot",
+    "site_admin": false
+  },
+  "node_id": "RE_kwDOExample",
+  "tag_name": "v0.3.0",
+  "target_commitish": "main",
+  "name": "WispOps v0.3.0",
+  "draft": false,
+  "immutable": false,
+  "prerelease": false,
+  "created_at": "2026-11-10T08:00:01Z",
+  "updated_at": "2026-11-10T08:12:45Z",
+  "published_at": "2026-11-10T08:12:45Z",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/xuzhougeng/WispOps/releases/assets/301",
+      "id": 301,
+      "node_id": "RA_kwDOExample1",
+      "name": "WispOps-v0.3.0-macos-arm64.dmg",
+      "label": "",
+      "uploader": {
+        "login": "github-actions[bot]",
+        "id": 41898282,
+        "type": "Bot",
+        "site_admin": false
+      },
+      "content_type": "application/x-apple-diskimage",
+      "state": "uploaded",
+      "size": 19812345,
+      "digest": null,
+      "download_count": 0,
+      "created_at": "2026-11-10T08:12:40Z",
+      "updated_at": "2026-11-10T08:12:44Z",
+      "browser_download_url": "https://github.com/xuzhougeng/WispOps/releases/download/v0.3.0/WispOps-v0.3.0-macos-arm64.dmg"
+    },
+    {
+      "url": "https://api.github.com/repos/xuzhougeng/WispOps/releases/assets/302",
+      "id": 302,
+      "node_id": "RA_kwDOExample2",
+      "name": "WispOps-v0.3.0-macos-x64.dmg",
+      "label": "",
+      "uploader": {
+        "login": "github-actions[bot]",
+        "id": 41898282,
+        "type": "Bot",
+        "site_admin": false
+      },
+      "content_type": "application/x-apple-diskimage",
+      "state": "uploaded",
+      "size": 20811234,
+      "digest": null,
+      "download_count": 0,
+      "created_at": "2026-11-10T08:12:40Z",
+      "updated_at": "2026-11-10T08:12:44Z",
+      "browser_download_url": "https://github.com/xuzhougeng/WispOps/releases/download/v0.3.0/WispOps-v0.3.0-macos-x64.dmg"
+    },
+    {
+      "url": "https://api.github.com/repos/xuzhougeng/WispOps/releases/assets/303",
+      "id": 303,
+      "node_id": "RA_kwDOExample3",
+      "name": "WispOps-v0.3.0-windows-x64.zip",
+      "label": "",
+      "uploader": {
+        "login": "github-actions[bot]",
+        "id": 41898282,
+        "type": "Bot",
+        "site_admin": false
+      },
+      "content_type": "application/zip",
+      "state": "uploaded",
+      "size": 14567890,
+      "digest": null,
+      "download_count": 0,
+      "created_at": "2026-11-10T08:12:40Z",
+      "updated_at": "2026-11-10T08:12:44Z",
+      "browser_download_url": "https://github.com/xuzhougeng/WispOps/releases/download/v0.3.0/WispOps-v0.3.0-windows-x64.zip"
+    },
+    {
+      "url": "https://api.github.com/repos/xuzhougeng/WispOps/releases/assets/304",
+      "id": 304,
+      "node_id": "RA_kwDOExample4",
+      "name": "WispOps-v0.3.0-linux-x64.tar.gz",
+      "label": "",
+      "uploader": {
+        "login": "github-actions[bot]",
+        "id": 41898282,
+        "type": "Bot",
+        "site_admin": false
+      },
+      "content_type": "application/gzip",
+      "state": "uploaded",
+      "size": 17456789,
+      "digest": null,
+      "download_count": 0,
+      "created_at": "2026-11-10T08:12:40Z",
+      "updated_at": "2026-11-10T08:12:44Z",
+      "browser_download_url": "https://github.com/xuzhougeng/WispOps/releases/download/v0.3.0/WispOps-v0.3.0-linux-x64.tar.gz"
+    },
+    {
+      "url": "https://api.github.com/repos/xuzhougeng/WispOps/releases/assets/305",
+      "id": 305,
+      "node_id": "RA_kwDOExample5",
+      "name": "SHA256SUMS",
+      "label": "",
+      "uploader": {
+        "login": "github-actions[bot]",
+        "id": 41898282,
+        "type": "Bot",
+        "site_admin": false
+      },
+      "content_type": "application/octet-stream",
+      "state": "uploaded",
+      "size": 402,
+      "digest": null,
+      "download_count": 0,
+      "created_at": "2026-11-10T08:12:40Z",
+      "updated_at": "2026-11-10T08:12:44Z",
+      "browser_download_url": "https://github.com/xuzhougeng/WispOps/releases/download/v0.3.0/SHA256SUMS"
+    }
+  ],
+  "tarball_url": "https://api.github.com/repos/xuzhougeng/WispOps/tarball/v0.3.0",
+  "zipball_url": "https://api.github.com/repos/xuzhougeng/WispOps/zipball/v0.3.0",
+  "body": "## WispOps v0.3.0\n\n- 自动检查更新\n"
+}
