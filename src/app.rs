@@ -120,6 +120,8 @@ pub enum Cmd {
     HostSearchChanged,
     // ---- overview
     SelectRun(String, usize),
+    /// Open or close a server's panel of charts.
+    OpenHost(String),
     // ---- vault
     AddCredential,
     EditCredential(String),
@@ -210,6 +212,8 @@ pub struct Workspace {
     pub working: HashSet<String>,
     // ---- overview: the inspection of a host that is on show (host, its place in the history).
     pub selected_run: Option<(String, usize)>,
+    /// The server whose charts are open in the overview.
+    pub open_host: Option<String>,
     // ---- audit
     pub audit_host: Option<String>,
     pub audit_hours: u32,
@@ -254,7 +258,7 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, open_host: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -270,6 +274,14 @@ impl Workspace {
 
     pub fn on(&self, cmd: Cmd, cx: &mut Context<Self>) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
         cx.listener(move |this, _, window, cx| this.run(cmd.clone(), window, cx))
+    }
+
+    /// As `on`, for something inside a row that is itself pressed: the row does not hear the click.
+    pub fn on_within(&self, cmd: Cmd, cx: &mut Context<Self>) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+        cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.run(cmd.clone(), window, cx)
+        })
     }
 
     pub fn on_menu(&self, kind: MenuKind, cx: &mut Context<Self>) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -482,7 +494,14 @@ impl Workspace {
                 self.run_confirmed(*cmd, window, cx);
             }
             cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
-            Cmd::SelectRun(host, at) => self.selected_run = if self.selected_run.as_ref() == Some(&(host.clone(), at)) { None } else { Some((host, at)) },
+            Cmd::SelectRun(host, at) => {
+                self.open_host = Some(host.clone());
+                self.selected_run = if self.selected_run.as_ref() == Some(&(host.clone(), at)) { None } else { Some((host, at)) };
+            }
+            Cmd::OpenHost(host) => {
+                self.selected_run = None;
+                self.open_host = if self.open_host.as_ref() == Some(&host) { None } else { Some(host) };
+            }
             cmd @ (Cmd::AddCredential | Cmd::EditCredential(_) | Cmd::DeleteCredential(_) | Cmd::ToggleAgentUse) => self.run_vault(cmd, window, cx),
             cmd @ (Cmd::AddTask | Cmd::EditTask(_) | Cmd::DeleteTask(_) | Cmd::RunTask(_) | Cmd::ToggleTask(_) | Cmd::PickPlaybook(_) | Cmd::PickSchedule(_) | Cmd::ToggleTaskSudo) => self.run_tasks(cmd, window, cx),
             Cmd::AuditHost(host) => {
@@ -814,6 +833,8 @@ impl Workspace {
                 self.run(Cmd::SetPage(page), window, cx);
             }
             "host" => self.run(Cmd::SelectHost(Some(arg.to_string())), window, cx),
+            "open" => self.run(Cmd::OpenHost(arg.to_string()), window, cx),
+            "chat" => self.settings.chat_hidden = arg == "off",
             "dark" => {
                 self.settings.appearance = "dark".into();
                 self.apply_appearance(window);

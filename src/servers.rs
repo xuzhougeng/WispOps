@@ -262,9 +262,10 @@ impl Workspace {
                 .min_h_0()
                 .overflow_y_scroll()
                 .track_scroll(&self.page_scroll)
-                .px(px(14.))
-                .py(px(8.))
-                .children(hosts.iter().map(|host| self.render_host_row(host, cx)))
+                .px(px(24.))
+                .pt(px(8.))
+                .pb(px(16.))
+                .when(!hosts.is_empty(), |d| d.child(ui::panel().p(px(4.)).gap(px(1.)).children(hosts.iter().map(|host| self.render_host_row(host, cx)))))
                 .when(hosts.is_empty(), |d| d.child(div().p(px(24.)).text_color(Theme::text_tertiary()).child(t("没有符合搜索的服务器。"))))
                 .into_any_element()
         };
@@ -279,7 +280,7 @@ impl Workspace {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(div().flex().flex_col().flex_1().min_w_0().when(!self.view.hosts.is_empty(), |d| d.child(div().px(px(24.)).pt(px(12.)).pb(px(4.)).child(div().max_w(px(360.)).child(ui::field(&self.host_search, window, cx))))).child(list))
+                    .child(div().flex().flex_col().flex_1().min_w_0().when(!self.view.hosts.is_empty(), |d| d.bg(Theme::bg_sunken())).when(!self.view.hosts.is_empty(), |d| d.child(div().px(px(24.)).pt(px(12.)).pb(px(4.)).child(div().max_w(px(360.)).child(ui::field(&self.host_search, window, cx))))).child(list))
                     .when_some(selected, |d, host| d.child(self.render_host_detail(host, cx))),
             )
             .into_any_element()
@@ -299,8 +300,8 @@ impl Workspace {
             .items_center()
             .gap(px(12.))
             .w_full()
-            .h(text_px(48.))
-            .px(px(10.))
+            .h(text_px(52.))
+            .px(px(12.))
             .rounded(px(8.))
             .cursor_pointer()
             .when(active, |d| d.bg(Theme::accent_soft()))
@@ -325,7 +326,7 @@ impl Workspace {
     fn render_host_detail(&self, host: &HostView, cx: &mut Context<Self>) -> AnyElement {
         let name = host.name.clone();
         let working = self.working.contains(&host.name);
-        let block = |title: &str, action: Option<AnyElement>, body: AnyElement| div().flex().flex_col().gap(px(8.)).child(div().flex().items_center().h(text_px(24.)).child(div().flex_1().child(ui::caption(title.to_string()))).children(action)).child(body);
+        let block = |title: &str, action: Option<AnyElement>, body: AnyElement| ui::panel().gap(px(6.)).px(px(12.)).pt(px(8.)).pb(px(12.)).child(div().flex().items_center().h(text_px(24.)).child(div().flex_1().child(ui::caption(title.to_string()))).children(action)).child(body);
         let fact = |label: &str, value: String| div().flex().gap(px(10.)).child(div().w(px(84.)).flex_none().text_color(Theme::text_tertiary()).child(label.to_string())).child(div().flex_1().min_w_0().child(value));
 
         let connection = div()
@@ -398,7 +399,7 @@ impl Workspace {
                     .gap(px(6.))
                     .text_size(text_px(12.))
                     .line_height(text_px(18.))
-                    .child(div().flex().items_center().gap(px(8.)).child(ui::status_chip(&run.state, t(state_label(&run.state)))).child(div().text_color(Theme::text_tertiary()).child(time::short_time(&run.at))).children(run.metrics_line().map(|line| div().flex_1().min_w_0().truncate().text_color(Theme::text_secondary()).child(line))))
+                    .child(div().flex().items_center().gap(px(8.)).child(ui::status_chip(&run.state, t(state_label(&run.state)))).child(div().text_color(Theme::text_tertiary()).child(time::short_time(&run.at)))).children(run.metrics_line().map(|line| div().text_color(Theme::text_secondary()).child(line)))
                     .children(problems.into_iter().map(|finding| div().flex().items_start().gap(px(6.)).child(div().flex_none().mt(px(6.)).size(px(6.)).rounded_full().bg(state_color(&finding.severity))).child(div().flex_1().min_w_0().text_color(if finding.muted { Theme::text_tertiary() } else { Theme::text() }).child(finding.message.clone()))))
                     .into_any_element()
             }
@@ -437,9 +438,9 @@ impl Workspace {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.detail_scroll)
-                    .px(px(16.))
+                    .px(px(14.))
                     .py(px(14.))
-                    .gap(px(18.))
+                    .gap(px(10.))
                     .when_some(host.blocked_until.as_ref(), |d, until| {
                         d.child(div().flex().items_center().gap(px(8.)).p(px(10.)).rounded(px(8.)).bg(Theme::danger_soft()).text_size(text_px(12.)).line_height(text_px(18.)).child(div().flex_1().text_color(Theme::danger()).child(tf!("认证失败，登录暂停到 {}，以免反复登录被当成暴力破解。", "Authentication failed; logins are paused until {} so retries are not taken for brute force.", time::short_time(until)))).child(ui::secondary_button("detail-unblock", t("解除")).h(text_px(24.)).on_click(self.on(Cmd::UnblockHost(name.clone()), cx))))
                     })
