@@ -6,7 +6,22 @@ AI 原生的服务器运维桌面工具，用 Rust + GPUI 写成。一份 SSH �
 
 整体逻辑移植自 DeepSeek Harness 插件 [dsh-wisp-ops](https://github.com/wisp-science/WispOps)；助手的协议层和界面基础件取自 Wisp Paper。
 
-## 运行
+## 安装
+
+从[发布页](https://github.com/xuzhougeng/WispOps/releases/latest)下载：
+
+| 平台 | 文件 | 说明 |
+|---|---|---|
+| **macOS**，Apple 芯片 | `WispOps-v<版本>-macos-arm64.dmg` | 打开后把 WispOps 拖进「应用程序」 |
+| **macOS**，Intel | `WispOps-v<版本>-macos-x64.dmg` | 同上 |
+| **Windows** 10 / 11（x64） | `WispOps-v<版本>-windows-x64.zip` | 解压后运行 `WispOps.exe` |
+| **Linux**（x64） | `WispOps-v<版本>-linux-x64.tar.gz` | 解压后运行 `wisp-ops`；没有在真机上测试过 |
+
+0.1 没有代码签名：macOS 第一次打开如果提示无法验证开发者或文件已损坏，执行 `xattr -cr /Applications/WispOps.app`；Windows 出现「Windows 已保护你的电脑」时点「更多信息」→「仍要运行」。
+
+## 从源码运行
+
+需要 Rust（版本见 `rust-toolchain.toml`，rustup 会自动安装）；Windows 上还需要 MSVC 构建工具，Linux 上的系统库见 `scripts/linux-build-deps.sh`。
 
 ```sh
 cargo run --release                              # 运行

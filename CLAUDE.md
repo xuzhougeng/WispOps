@@ -11,11 +11,16 @@ cargo test -p wisp_ops_engine                 # engine only, no GPUI build
 cargo clippy --features runtime_shaders --all-targets   # expected to be warning-free
 ```
 
-- No pinned toolchain; do not run `cargo fmt` on the root crate, `crates/core` or `crates/net` (hand-formatted, long lines, as in Wisp Paper).
+- The toolchain is pinned in `rust-toolchain.toml` (as in Wisp Paper); do not run `cargo fmt` on the root crate, `crates/core` or `crates/net` (hand-formatted, long lines, as in Wisp Paper).
 - `WISP_OPS_HOME=<dir>` holds data and settings; `WISP_OPS_VAULT_KEY=file` keeps the vault key beside the vault instead of the keychain. Use both for any manual or scripted run.
 - Debug builds script the window: `WISP_OPS_DEV="page:servers,2@shot:/tmp/a.png,3@quit"` (steps in `dev_step` at the end of `src/app.rs`; `shot:` renders off-screen to a PNG).
 - An end-to-end run without servers: point `config.json`'s `ssh.binary` at `crates/engine/tests/fixtures/fake-ssh.sh`, which runs the "remote" script locally.
 - In a `#[cfg(test)]` module of a file with `use gpui::*`, do not `use super::*` (it brings in gpui's `test` attribute).
+
+## CI and releases
+
+- `.github/workflows/ci.yml`: clippy `-D warnings` and the tests on Windows, macOS and Linux for every push to main and every pull request (no `runtime_shaders`: the runners have the Metal Toolchain).
+- `.github/workflows/release.yml`: a pushed tag `v<version>` matching `Cargo.toml` builds the DMGs (`scripts/package-macos.sh`), the Windows zip and the Linux tar.gz and publishes a release with `.github/release-notes/<tag>.md`. Signed when all ten signing secrets are set, unsigned when none are, stopped when only some are. A pull request touching `scripts/` or the workflow rehearses the packaging unsigned.
 
 ## Architecture
 
