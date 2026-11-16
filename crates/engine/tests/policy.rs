@@ -166,7 +166,8 @@ fn rejects_duplicate_hosts_and_tasks_that_are_not_read_only() {
     assert!(load(json!([{ "name": "t", "targets": "all !all", "playbook": "inspect" }])).unwrap_err().contains("matches no hosts"));
     assert!(load(json!([{ "name": "t", "targets": "a", "playbook": "inspect", "schedule": { "daily": "08:00", "everyMinutes": 5 } }])).unwrap_err().contains("exactly one of"));
     assert!(load(json!([{ "name": "t", "targets": "a", "playbook": "inspect", "schedule": { "everyMinutes": 5, "weekdays": [1] } }])).unwrap_err().contains("weekdays need daily"));
-    assert!(load(json!([{ "name": "t", "targets": "a", "playbook": "inspect", "report": "problems", "schedule": { "cron": "0 8 * * *" } }])).unwrap_err().contains("not cron"));
+    // The timer keeps cron schedules, so a report that runs without the agent may use one.
+    assert!(load(json!([{ "name": "t", "targets": "a", "playbook": "inspect", "report": "problems", "schedule": { "cron": "0 8 * * 1-5" } }])).unwrap().task("t").unwrap().schedule.as_ref().unwrap().cron.is_some());
     assert!(load(json!([{ "name": "t", "targets": "a", "playbook": "custom", "instruction": "x", "report": "never" }])).unwrap_err().contains("needs read-only commands"));
     assert!(load(json!([{ "name": "t", "targets": "a", "playbook": "inspect", "quietHours": { "start": "22:00", "end": "22:00" } }])).unwrap_err().contains("different start and end"));
     assert!(load(json!([{ "name": "t", "targets": "a", "playbook": "inspect", "quietHours": { "start": "22:00", "end": "08:00", "timeZone": "Mars/Base" } }])).unwrap_err().contains("is invalid"));

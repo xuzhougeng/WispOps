@@ -61,9 +61,10 @@ impl Workspace {
             paths: self.modal_input("/data, /home", &known.paths.join(", "), false, cx),
             instruction: self.modal_input("报告里要说什么、怎么判断正常", &known.instruction, true, cx),
             commands: self.modal_input("每行一条只读命令，例如：systemctl is-active nginx", &known.commands.join("\n"), true, cx),
-            schedule: match known.schedule.as_str() { "daily" => "daily", "every" => "every", _ => "manual" },
+            schedule: match known.schedule.as_str() { "daily" => "daily", "every" => "every", "cron" => "cron", _ => "manual" },
             daily: self.modal_input("08:30", &known.daily, false, cx),
             every: self.modal_input("60", &known.every_minutes.to_string(), false, cx),
+            cron: self.modal_input(crate::ops::DEFAULT_CRON, if known.cron.is_empty() { crate::ops::DEFAULT_CRON } else { &known.cron }, false, cx),
             sudo: known.sudo,
             editing,
         };
@@ -85,6 +86,7 @@ impl Workspace {
             schedule: form.schedule.into(),
             daily: read(&form.daily),
             every_minutes: if form.schedule == "every" { every.parse::<u32>().ok().filter(|minutes| *minutes > 0).ok_or_else(|| t("间隔应是大于 0 的分钟数。").to_string())? } else { 60 },
+            cron: read(&form.cron),
             sudo: form.sudo,
         };
         self.fleet.save_task(form.editing.as_deref(), draft)?;
@@ -151,8 +153,10 @@ impl Workspace {
             (div().id("schedule-manual").child(t("仅手动")).on_click(self.on(Cmd::PickSchedule("manual"), cx)), form.schedule == "manual"),
             (div().id("schedule-daily").child(t("每天")).on_click(self.on(Cmd::PickSchedule("daily"), cx)), form.schedule == "daily"),
             (div().id("schedule-every").child(t("固定间隔")).on_click(self.on(Cmd::PickSchedule("every"), cx)), form.schedule == "every"),
+            (div().id("schedule-cron").child("cron").on_click(self.on(Cmd::PickSchedule("cron"), cx)), form.schedule == "cron"),
         ])
-        .w(px(260.));
+        .w(px(330.));
+        let cron = (form.schedule == "cron").then(|| self.cron_preview(form, cx));
         let wants_paths = matches!(form.playbook, "disk" | "space" | "new-files");
         let body = div()
             .flex()
@@ -164,7 +168,8 @@ impl Workspace {
             .when(wants_paths, |d| d.child(field("路径（逗号分隔）", &form.paths, window, cx)))
             .child(field(if form.playbook == "custom" { "只读命令（每行一条）" } else { "附加的只读命令（可选，每行一条）" }, &form.commands, window, cx))
             .child(field("报告要求（助手汇报时照此写）", &form.instruction, window, cx))
-            .child(div().flex().items_end().gap(px(12.)).child(ui::form_row(t("运行时间").to_string(), schedules)).when(form.schedule == "daily", |d| d.child(div().w(px(100.)).child(ui::field(&form.daily, window, cx)))).when(form.schedule == "every", |d| d.child(div().w(px(100.)).child(ui::field(&form.every, window, cx))).child(div().pb(px(8.)).text_color(Theme::text_tertiary()).child(t("分钟")))))
+            .child(div().flex().items_end().gap(px(12.)).child(ui::form_row(t("运行时间").to_string(), schedules)).when(form.schedule == "daily", |d| d.child(div().w(px(100.)).child(ui::field(&form.daily, window, cx)))).when(form.schedule == "every", |d| d.child(div().w(px(100.)).child(ui::field(&form.every, window, cx))).child(div().pb(px(8.)).text_color(Theme::text_tertiary()).child(t("分钟")))).when(form.schedule == "cron", |d| d.child(div().flex_1().child(ui::field(&form.cron, window, cx)))))
+            .when_some(cron, |d, cron| d.child(cron))
             .child(
                 div()
                     .id("task-sudo")
@@ -178,6 +183,22 @@ impl Workspace {
             )
             .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("任务只采集和记录，不做任何变更。命令在保存时按与助手相同的分类器校验，只接受只读命令。定时运行需要这个窗口开着。")));
         (if form.editing.is_some() { t("编辑例行任务").to_string() } else { t("新建例行任务").to_string() }, 620., body, Some(t("保存").to_string()), false)
+    }
+
+    /// Under the cron field: what the expression means and its next runs in the configured zone,
+    /// or why it cannot be used. Pure arithmetic on the field's text, nothing read from disk.
+    fn cron_preview(&self, form: &TaskForm, cx: &mut Context<Self>) -> Div {
+        let zone = self.fleet.config.time_zone.clone();
+        let line = || div().text_size(text_px(12.)).line_height(text_px(18.));
+        match crate::cron::preview(form.cron.read(cx).text().trim(), &zone, time::now_millis(), 3) {
+            Ok((meaning, runs)) => div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(line().text_color(Theme::text_secondary()).child(meaning))
+                .child(line().text_color(Theme::text_tertiary()).child(tf!("接下来（{zone}）：{}", "Next runs ({zone}): {}", runs.join(if crate::i18n::is_english() { ", " } else { "、" })))),
+            Err(why) => ui::error_line(&why),
+        }
     }
 
     pub fn render_tasks(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {

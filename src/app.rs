@@ -1020,6 +1020,10 @@ impl Workspace {
             "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
             "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
+            "schedule" => self.run(Cmd::PickSchedule(match arg { "cron" => "cron", "every" => "every", "manual" => "manual", _ => "daily" }), window, cx),
+            "cron" => {
+                if let Some(Modal::Task(form)) = self.modal.as_ref() { form.cron.clone().update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)) }
+            }
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),
             // The credential dialog of a server: `bind:web-01` for its login, `bind-sudo:web-01`; `bind-new` writes a new one.

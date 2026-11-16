@@ -167,10 +167,12 @@ pub struct TaskDraft {
     pub paths: Vec<String>,
     pub instruction: String,
     pub commands: Vec<String>,
-    /// `manual`, `daily` or `every`.
+    /// `manual`, `daily`, `every` or `cron`.
     pub schedule: String,
     pub daily: String,
     pub every_minutes: u32,
+    /// Five-field cron expression, evaluated in the configured zone.
+    pub cron: String,
     pub sudo: bool,
 }
 
@@ -186,7 +188,7 @@ pub struct TaskView {
     pub name: String,
     pub draft: TaskDraft,
     pub managed: bool,
-    /// It has a time the timer can keep (daily or an interval; cron is not kept).
+    /// It has a time the timer can keep (daily, weekly, an interval or cron).
     pub scheduled: bool,
     pub enabled: bool,
     pub when: String,
@@ -757,7 +759,7 @@ impl Fleet {
             let records: Vec<TaskRunRecord> = self.store.read_bounded("tasks", &task.name).unwrap_or_default();
             let last = records.last();
             let entry = timer.tasks.get(&task.name);
-            let timed = task.schedule.as_ref().filter(|schedule| schedule.cron.is_none() && schedule.is_timed());
+            let timed = task.schedule.as_ref().filter(|schedule| schedule.is_timed());
             let next = match (timed, entry) {
                 (Some(schedule), Some(entry)) => schedule::next_due(schedule, zone, last.map(|record| record.at.as_str()), &entry.enabled_at, now).ok().flatten().map(time::to_iso),
                 _ => None,
@@ -955,6 +957,10 @@ impl Fleet {
         let schedule = match draft.schedule.as_str() {
             "daily" => Some(TaskSchedule { daily: Some(draft.daily.clone()), ..Default::default() }),
             "every" => Some(TaskSchedule { every_minutes: Some(u64::from(draft.every_minutes)), ..Default::default() }),
+            "cron" => {
+                wisp_ops_engine::cron::parse(&draft.cron).map_err(|why| tf!("cron 表达式不能用：{}", "The cron expression cannot be used: {}", crate::cron::error(&why)))?;
+                Some(TaskSchedule { cron: Some(draft.cron.split_whitespace().collect::<Vec<_>>().join(" ")), ..Default::default() })
+            }
             _ => None,
         };
         if playbook == Playbook::Custom && draft.commands.is_empty() { return Err("自定义任务至少写一条只读命令。".into()) }
@@ -1014,7 +1020,7 @@ impl Fleet {
         let now = time::now_ms();
         self.timer_state().tasks.iter().filter_map(|(name, entry)| {
             let task = inventory.task(name)?;
-            let schedule = task.schedule.as_ref().filter(|schedule| schedule.cron.is_none())?;
+            let schedule = task.schedule.as_ref()?;
             let last: Option<TaskRunRecord> = self.store.read_bounded("tasks", name).ok().and_then(|mut rows: Vec<TaskRunRecord>| rows.pop());
             schedule::due_now(schedule, &self.config.time_zone, last.as_ref().map(|record| record.at.as_str()), &entry.enabled_at, now).ok().filter(|due| *due).map(|_| name.clone())
         }).collect()
@@ -1187,6 +1193,9 @@ pub fn as_run(result: &RunResult) -> Run {
     Run { host: result.host.clone(), status: result.status.as_str().into(), exit_code: result.exit_code, stdout: result.stdout.clone(), stderr: result.stderr.clone(), truncated: result.truncated, duration_ms: result.duration_ms }
 }
 
+/// What the cron field of a task form starts with.
+pub const DEFAULT_CRON: &str = "30 8 * * 1-5";
+
 fn draft_of(task: &TaskSpec) -> TaskDraft {
     let schedule = task.schedule.as_ref();
     TaskDraft {
@@ -1197,9 +1206,10 @@ fn draft_of(task: &TaskSpec) -> TaskDraft {
         paths: task.paths.clone(),
         instruction: task.instruction.clone().unwrap_or_default(),
         commands: task.commands.clone(),
-        schedule: match schedule { Some(schedule) if schedule.daily.is_some() => "daily", Some(schedule) if schedule.every_minutes.is_some() => "every", _ => "manual" }.into(),
+        schedule: match schedule { Some(schedule) if schedule.daily.is_some() => "daily", Some(schedule) if schedule.every_minutes.is_some() => "every", Some(schedule) if schedule.cron.is_some() => "cron", _ => "manual" }.into(),
         daily: schedule.and_then(|schedule| schedule.daily.clone()).unwrap_or_else(|| "08:30".into()),
         every_minutes: schedule.and_then(|schedule| schedule.every_minutes).unwrap_or(60) as u32,
+        cron: schedule.and_then(|schedule| schedule.cron.clone()).unwrap_or_else(|| DEFAULT_CRON.into()),
         sudo: task.sudo == Some(true),
     }
 }
@@ -1211,7 +1221,10 @@ fn describe_when(schedule: Option<&TaskSchedule>) -> String {
         Some(schedule) => match (&schedule.daily, &schedule.cron, schedule.every_minutes) {
             (Some(daily), ..) if schedule.weekdays.is_empty() => tf!("每天 {daily}", "Daily at {daily}"),
             (Some(daily), ..) => tf!("每周 {} 的 {daily}", "Weekdays {} at {daily}", schedule.weekdays.iter().map(u32::to_string).collect::<Vec<_>>().join(",")),
-            (_, Some(cron), _) => tf!("cron {cron}（定时器不支持，仅手动）", "cron {cron} (not kept by the timer; manual only)"),
+            (_, Some(cron), _) => match wisp_ops_engine::cron::parse(cron) {
+                Ok(parsed) => format!("{} · cron {cron}", crate::cron::describe(&parsed)),
+                Err(why) => tf!("cron {cron}（不能用：{}）", "cron {cron} (cannot be used: {})", crate::cron::error(&why)),
+            },
             (_, _, Some(minutes)) => tf!("每 {minutes} 分钟", "Every {minutes} min"),
             _ => crate::i18n::t("仅手动").to_string(),
         },
@@ -1275,6 +1288,22 @@ mod tests {
         std::fs::remove_dir(root.join("managed.json.lock")).unwrap();
         assert!(names(&fleet).is_empty());
         assert_eq!(fleet.inventory().host("cpu").and_then(|host| host.login_secret.clone()), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_cron_task_is_saved_kept_by_the_timer_and_an_unusable_expression_is_refused() {
+        let (fleet, root) = fleet("cron");
+        let draft = |expression: &str| super::TaskDraft { name: "weekday".into(), targets: "all".into(), playbook: "inspect".into(), schedule: "cron".into(), cron: expression.into(), ..Default::default() };
+        let refused = fleet.save_task(None, draft("0 8 31 2 *")).unwrap_err();
+        assert!(refused.contains("cron"), "{refused}");
+        assert!(fleet.inventory().task("weekday").is_none());
+        fleet.save_task(None, draft("  30 8   * * 1-5 ")).unwrap();
+        assert_eq!(fleet.inventory().task("weekday").and_then(|task| task.schedule.clone()).and_then(|schedule| schedule.cron).as_deref(), Some("30 8 * * 1-5"));
+        let view = fleet.view();
+        let task = view.tasks.iter().find(|task| task.name == "weekday").unwrap();
+        assert!(task.scheduled && task.enabled && task.next.is_some());
+        assert_eq!((task.draft.schedule.as_str(), task.draft.cron.as_str()), ("cron", "30 8 * * 1-5"));
         let _ = std::fs::remove_dir_all(root);
     }
 }
