@@ -83,4 +83,4 @@ cargo clippy --all-targets                       # 应当没有警告
 
 ## 相对插件没有做的
 
-检查脚本库与草稿（`ops_script_draft`、`ops_template_draft`）、任务模板库、外部 webhook 通知、WebDAV 设备同步、WispTerm 兼容、总览的趋势折线和空间方块图、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）、cron 调度、自动更新。
+检查脚本库与草稿（`ops_script_draft`、`ops_template_draft`）、任务模板库、外部 webhook 通知、WebDAV 设备同步、WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）、cron 调度、自动更新。
