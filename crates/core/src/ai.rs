@@ -514,7 +514,7 @@ pub struct Slash {
     pub alone: &'static str,
 }
 
-pub const SLASH: [Slash; 6] = [
+pub const SLASH: [Slash; 7] = [
     Slash {
         name: "inspect",
         about: "巡检服务器并汇报",
@@ -551,6 +551,8 @@ pub const SLASH: [Slash; 6] = [
         alone: "all",
     },
     Slash { name: "new", about: "开始一次新对话", hint: "", template: "", alone: "" },
+    // The name other assistants use for the same thing.
+    Slash { name: "clear", about: "清空当前对话，重新开始", hint: "", template: "", alone: "" },
 ];
 
 /// A command the person wrote: a name and the request it stands for, kept
@@ -598,7 +600,7 @@ pub fn command_name_problem<'a>(name: &str, mut others: impl Iterator<Item = &'a
 pub enum Input {
     /// A request for the model: the message itself, or what a slash command stands for.
     Ask(String),
-    /// `/new`: leave this conversation and start another.
+    /// `/new` or `/clear`: leave this conversation and start another.
     NewChat,
 }
 
@@ -752,3 +754,20 @@ pub fn error_message(status: u16, body: &str) -> String {
     format!("{hint}（HTTP {status}）：{}", detail.trim())
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_and_new_start_a_conversation() {
+        for typed in ["/new", "/clear", " /clear  "] {
+            assert_eq!(read_input(typed, &[]), Ok(Input::NewChat), "{typed}");
+        }
+        // Offered while typing, as a command the window carries out itself.
+        let offers = slash_matches("/cl", &[]);
+        assert!(offers.iter().any(|offer| offer.name == "clear" && offer.runs), "{offers:?}");
+        // A built-in name is not free for a command of the person's own.
+        assert!(command_name_problem("clear", std::iter::empty()).is_some());
+    }
+}

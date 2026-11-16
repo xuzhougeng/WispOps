@@ -201,7 +201,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .size_full()
-            .child(self.page_head(t("设置"), t("模型服务、外观和助手可以读的技能；都只保存在这台电脑上"), vec![tabs.into_any_element()]))
+            .child(self.page_head(t("设置"), t("模型服务、外观和助手可以读的技能；都只保存在这台电脑上"), vec![tabs.into_any_element()], cx))
             .child(div().id("settings-body").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.settings_view.scroll).child(div().flex().flex_col().w_full().max_w(px(860.)).px(px(24.)).py(px(20.)).gap(px(20.)).child(body)))
             .into_any_element()
     }

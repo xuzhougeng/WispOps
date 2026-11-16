@@ -273,7 +273,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .size_full()
-            .child(self.page_head(t("服务器"), about, actions))
+            .child(self.page_head(t("服务器"), about, actions, cx))
             .when_some(self.view.inventory_error.as_ref(), |d, error| d.child(div().px(px(24.)).pt(px(10.)).child(ui::error_line(error))))
             .child(
                 div()
@@ -307,6 +307,7 @@ impl Workspace {
             .when(active, |d| d.bg(Theme::accent_soft()))
             .hover(|s| s.bg(Theme::hover()))
             .on_click(self.on(Cmd::SelectHost(if active { None } else { Some(host.name.clone()) }), cx))
+            .on_mouse_down(MouseButton::Right, self.on_context(MenuKind::HostActions(host.name.clone()), cx))
             .child(if working { ui::spinner(SharedString::from(format!("host-working-{}", host.name)), 12., Theme::accent()).into_any_element() } else { div().flex_none().size(px(9.)).m(px(1.5)).rounded_full().bg(state_color(state)).into_any_element() })
             .child(div().flex().flex_col().w(px(200.)).flex_none().child(div().truncate().font_weight(FontWeight::MEDIUM).child(host.name.clone())).child(div().truncate().text_size(text_px(12.)).line_height(text_px(16.)).text_color(Theme::text_tertiary()).child(host.address.clone())))
             .child(div().flex().flex_none().w(px(150.)).gap(px(4.)).overflow_hidden().children(host.groups.iter().take(3).map(|group| ui::chip(group.clone(), Theme::text_secondary(), Theme::groove()))))
