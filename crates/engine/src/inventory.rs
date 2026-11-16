@@ -250,12 +250,6 @@ impl Inventory {
                     report.as_str()
                 ));
             }
-            if task.schedule.as_ref().is_some_and(|schedule| schedule.cron.is_some()) {
-                return Err(format!(
-                    "task \"{name}\" report \"{}\" runs on the WispOps timer, which takes daily, weekly or interval schedules, not cron",
-                    report.as_str()
-                ));
-            }
         }
         // Commands run unattended under the task's authorization, so only commands the classifier
         // proves read-only are accepted; everything else must go through an approved execution.

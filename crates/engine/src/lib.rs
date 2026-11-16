@@ -5,6 +5,8 @@
 
 /// Managed changes: backup → apply → verify → rollback as one remote shell transaction.
 pub mod change;
+/// Five-field cron expressions evaluated in IANA time zones.
+pub mod cron;
 /// Configuration types, defaults and validation.
 pub mod config;
 /// Connection diagnosis (DNS, TCP, SSH banner) without logging in.

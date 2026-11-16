@@ -666,9 +666,9 @@ pub fn validate_task(task: &TaskSpec) -> Result<(), String> {
             return Err(format!("task \"{name}\": schedule.weekdays must be ISO weekdays 1-7"));
         }
         if let Some(cron) = &schedule.cron
-            && !js_re!(r"^\S+(?:\s+\S+){4}$").is_match(cron)
+            && let Err(error) = crate::cron::parse(cron)
         {
-            return Err(format!("task \"{name}\": schedule.cron must be a five-field expression"));
+            return Err(format!("task \"{name}\": schedule.cron \"{cron}\" {error}"));
         }
         if schedule.every_minutes == Some(0) {
             return Err(format!("task \"{name}\": schedule.everyMinutes must be at least 1"));

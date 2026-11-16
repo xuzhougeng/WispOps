@@ -1054,6 +1054,10 @@ impl Workspace {
             "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
             "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
+            "schedule" => self.run(Cmd::PickSchedule(match arg { "cron" => "cron", "every" => "every", "manual" => "manual", _ => "daily" }), window, cx),
+            "cron" => {
+                if let Some(Modal::Task(form)) = self.modal.as_ref() { form.cron.clone().update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)) }
+            }
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             // The webhook dialog: `add-webhook`, `edit-webhook:0`; `test-webhook` tests the dialog's fields, `test-webhook:0` a saved one.
             "add-webhook" => self.run(Cmd::AddWebhook, window, cx),

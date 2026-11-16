@@ -13,6 +13,7 @@ mod assets;
 mod assistant;
 mod audit;
 mod chat;
+mod cron;
 mod dialogs;
 mod disk;
 mod findings;
