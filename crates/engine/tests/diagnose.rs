@@ -59,7 +59,8 @@ fn names_the_step_that_fails() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.local_addr().unwrap().port()
     };
-    let refused = diagnose_target("down", &target("127.0.0.1", closed), 1000);
+    // Windows retries a refused connection for about two seconds before saying so.
+    let refused = diagnose_target("down", &target("127.0.0.1", closed), if cfg!(windows) { 5000 } else { 1000 });
     assert_eq!(refused.verdict, Verdict::Tcp);
     assert_eq!((refused.steps.len(), refused.steps[0].step, refused.steps[0].ok, refused.steps[0].detail.as_str()), (1, DiagnosisStepName::Tcp, false, "ECONNREFUSED"));
     let dns = diagnose_target("typo", &target("no-such-host.invalid", 22), 1000);

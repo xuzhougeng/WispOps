@@ -103,6 +103,8 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
+    // Only the test that runs the real shell reads these.
+    #[cfg(unix)]
     const LINES: &str = "Nov 16 09:59:01 web sshd[1]: Invalid user admin from 203.0.113.7 port 4000
 Nov 16 09:59:03 web sshd[1]: Failed password for invalid user admin from 203.0.113.7 port 4000 ssh2
 Nov 16 10:00:10 web sshd[2]: Failed password for root from 203.0.113.7 port 4001 ssh2
