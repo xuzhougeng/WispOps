@@ -17,7 +17,7 @@ use crate::ops::{Fleet, View};
 use crate::theme::{self, Theme, text_px};
 use crate::ui;
 use gpui::{prelude::FluentBuilder, *};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -146,6 +146,14 @@ pub enum Cmd {
     // ---- long-running tasks
     CheckLongJobs(String),
     SetLongHours(u32),
+    /// Fold or unfold a server's card.
+    ToggleLongHost(String),
+    /// Fold (true) or unfold every server's card.
+    FoldLongHosts(bool),
+    /// Put a user in a server's filter, or take them out: server, user.
+    LongUser(String, String),
+    /// Set a server's filter to this text (empty clears it).
+    LongFilter(String, String),
     // ---- security
     ScanAttacks(String),
     OpenAttack(String),
@@ -247,6 +255,9 @@ pub struct Workspace {
     pub disk: crate::disk::DiskState,
     // ---- long-running tasks and security: the hosts being checked right now, and the triage laid open.
     pub long_working: HashSet<String>,
+    /// The servers whose long-task cards are folded, and each checked server's filter.
+    pub long_folded: HashSet<String>,
+    pub long_filters: HashMap<String, (Entity<TextInput>, Subscription)>,
     pub attack_working: HashSet<String>,
     pub open_attack: Option<String>,
     // ---- audit
@@ -293,11 +304,12 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
         this.load_skills();
+        this.sync_long_filters(cx);
         if this.view.hosts.is_empty() { this.page = Page::Servers }
         this
     }
@@ -367,6 +379,7 @@ impl Workspace {
         self.view = self.fleet.view();
         self.view.audit = self.fleet.audit(self.audit_host.as_deref(), self.audit_hours, crate::audit::AUDIT_ROWS);
         if self.selected_host.as_ref().is_some_and(|name| !self.view.hosts.iter().any(|host| &host.name == name)) { self.selected_host = None }
+        self.sync_long_filters(cx);
         cx.notify();
     }
 
@@ -560,6 +573,7 @@ impl Workspace {
             cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
             cmd @ (Cmd::DiskHost(_) | Cmd::AskFullScan(_) | Cmd::DiskScan(..) | Cmd::DiskPath(_) | Cmd::DiskZoom(_) | Cmd::DiskList(_) | Cmd::ToggleDiskFree) => self.run_disk(cmd, cx),
             Cmd::CheckLongJobs(selector) => self.check_long_jobs(selector, false, cx),
+            cmd @ (Cmd::ToggleLongHost(_) | Cmd::FoldLongHosts(_) | Cmd::LongUser(..) | Cmd::LongFilter(..)) => self.run_longrun(cmd, cx),
             Cmd::ScanAttacks(selector) => self.scan_attacks(selector, cx),
             Cmd::OpenAttack(host) => self.open_attack = if self.open_attack.as_ref() == Some(&host) { None } else { Some(host) },
             Cmd::SelectRun(host, at) => {
@@ -946,6 +960,14 @@ impl Workspace {
             "zoom" => self.run(Cmd::DiskZoom(arg.to_string()), window, cx),
             "disk-list" => self.run(Cmd::DiskList(arg != "map"), window, cx),
             "long-check" => self.run(Cmd::CheckLongJobs(arg.to_string()), window, cx),
+            // `long-fold:<host>`, or `long-fold:all` / `long-fold:none`.
+            "long-fold" => self.run(match arg { "all" => Cmd::FoldLongHosts(true), "none" => Cmd::FoldLongHosts(false), host => Cmd::ToggleLongHost(host.to_string()) }, window, cx),
+            // `long-filter:<host>=<words, + for spaces>`; `long-user:<host>=<user>`.
+            "long-filter" | "long-user" => {
+                let (host, text) = arg.split_once('=').unwrap_or((arg, ""));
+                let (host, text) = (host.to_string(), text.replace('+', " "));
+                self.run(if name == "long-user" { Cmd::LongUser(host, text) } else { Cmd::LongFilter(host, text) }, window, cx);
+            }
             "attack-scan" => self.run(Cmd::ScanAttacks(arg.to_string()), window, cx),
             "open-attack" => self.run(Cmd::OpenAttack(arg.to_string()), window, cx),
             "add-host" => self.run(Cmd::AddHost, window, cx),
