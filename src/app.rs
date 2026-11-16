@@ -179,6 +179,8 @@ pub enum Cmd {
     PickPlaybook(&'static str),
     PickSchedule(&'static str),
     ToggleTaskSudo,
+    /// The check-script library and its drafts (`scripts.rs`).
+    Scripts(crate::scripts::ScriptCmd),
     // ---- audit
     AuditHost(Option<String>),
     AuditRange(u32),
@@ -303,6 +305,7 @@ pub struct Workspace {
     pub audit_hours: u32,
     // ---- tasks: the tasks running from the window right now.
     pub running_tasks: HashSet<String>,
+    pub scripts: crate::scripts::ScriptsState,
     pub modal: Option<Modal>,
     pub modal_error: String,
     pub modal_busy: bool,
@@ -347,7 +350,7 @@ impl Workspace {
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
         let sync = crate::sync::SyncPage::new(&fleet, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -647,6 +650,7 @@ impl Workspace {
             }
             cmd @ (Cmd::AddCredential | Cmd::EditCredential(_) | Cmd::DeleteCredential(_) | Cmd::ToggleAgentUse) => self.run_vault(cmd, window, cx),
             cmd @ (Cmd::AddTask | Cmd::EditTask(_) | Cmd::DeleteTask(_) | Cmd::RunTask(_) | Cmd::ToggleTask(_) | Cmd::PickPlaybook(_) | Cmd::PickSchedule(_) | Cmd::ToggleTaskSudo) => self.run_tasks(cmd, window, cx),
+            Cmd::Scripts(cmd) => self.run_scripts(cmd, window, cx),
             Cmd::AuditHost(host) => {
                 self.audit_host = host;
                 self.page = Page::Audit;
@@ -1058,6 +1062,10 @@ impl Workspace {
             "cron" => {
                 if let Some(Modal::Task(form)) = self.modal.as_ref() { form.cron.clone().update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)) }
             }
+            // The 检查脚本 tab of 例行任务, a script or draft laid open (`script-open:draft:<id>`), a script as a new task.
+            "scripts" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::Tab(arg != "off")), window, cx),
+            "script-open" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::Open(arg.to_string())), window, cx),
+            "use-script" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::UseInTask(arg.to_string())), window, cx),
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             // The webhook dialog: `add-webhook`, `edit-webhook:0`; `test-webhook` tests the dialog's fields, `test-webhook:0` a saved one.
             "add-webhook" => self.run(Cmd::AddWebhook, window, cx),
