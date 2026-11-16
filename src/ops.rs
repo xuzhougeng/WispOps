@@ -354,6 +354,11 @@ const REPORT_GUIDE: &str = "Report format (use the user's language):\n1. One sta
 impl Fleet {
     /// Open the data folder: `config.json` (optional overrides), `inventory.yml`, `managed.json`, the vault and the stores.
     pub fn open(root: &Path) -> Fleet {
+        // `WISP_OPS_VAULT_KEY=file` keeps the vault's key beside it instead of in the system's key store: for tests and scripted runs.
+        Fleet::open_keyed(root, std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file"))
+    }
+
+    fn open_keyed(root: &Path, file_key: bool) -> Fleet {
         let _ = std::fs::create_dir_all(root);
         let mut overrides = std::fs::read_to_string(root.join("config.json")).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok()).filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
         overrides["dataDir"] = Value::String(root.to_string_lossy().into_owned());
@@ -361,8 +366,7 @@ impl Fleet {
         let thresholds: Thresholds = serde_json::from_value(config.thresholds.clone()).unwrap_or_default();
         let runner = SshRunner::new(config.ssh.clone(), config.limits.max_output_bytes as usize, root);
         let store = OpsStore::new(root, (&config.retention).into());
-        // `WISP_OPS_VAULT_KEY=file` keeps the vault's key beside it instead of in the system's key store: for tests and scripted runs.
-        let vault = if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") { LocalVault::with_key_provider(root, Box::new(FileKey::default())) } else { LocalVault::new(root) };
+        let vault = if file_key { LocalVault::with_key_provider(root, Box::new(FileKey::default())) } else { LocalVault::new(root) };
         let deny = DenyList::compile(&config.deny_patterns).unwrap_or_else(|_| DenyList::compile(&config::default_deny_patterns()).expect("built-in deny list"));
         let extra_read = config.extra_read_programs.iter().cloned().collect();
         let empty = Inventory::from_specs(vec![], BTreeMap::new(), config.default_policy).expect("empty inventory");
@@ -869,10 +873,24 @@ impl Fleet {
     // ---- the vault
 
     pub fn save_credential(&self, editing: Option<&str>, name: &str, username: &str, password: &str, note: &str, agent: bool) -> Result<(), String> {
+        self.write_credential(editing, name, username, password, note, agent, None)
+    }
+
+    /// A new credential, linked at once to a host's SSH login or its sudo. One step: when the link
+    /// cannot be written, the vault is put back as it was, so there is no credential without its link.
+    pub fn create_and_bind(&self, host: &str, sudo: bool, name: &str, username: &str, password: &str, note: &str, agent: bool) -> Result<(), String> {
+        if !self.inventory().has_host(host) { return Err(format!("清单里没有 {host}。")) }
+        if password.is_empty() { return Err("填写密码。".into()) }
+        let mut link = || self.bind_credential(host, sudo, name);
+        self.write_credential(None, name, username, password, note, agent, Some(&mut link))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_credential(&self, editing: Option<&str>, name: &str, username: &str, password: &str, note: &str, agent: bool, then: Option<wisp_ops_engine::vault::Participant<'_>>) -> Result<(), String> {
         let listing = self.vault.list()?;
         if let Some(old) = editing && old != name { return Err("凭据的名称关联着服务器，不能修改；需要换名时新建一条。".into()) }
         if editing.is_none() && listing.entries.iter().any(|entry| entry.name == name) { return Err(format!("已经有一条叫 {name} 的凭据。")) }
-        self.vault.save(&CredentialInput { name: name.to_string(), username: username.to_string(), note: note.to_string(), agent, password: Some(password.to_string()).filter(|password| !password.is_empty()) }, &listing.revision, None)
+        self.vault.save(&CredentialInput { name: name.to_string(), username: username.to_string(), note: note.to_string(), agent, password: Some(password.to_string()).filter(|password| !password.is_empty()) }, &listing.revision, then)
     }
 
     /// Delete a credential; the servers that used it go back to keys and to no sudo password.
@@ -1189,4 +1207,53 @@ pub fn skills(settings_file: &Path) -> Vec<wisp_ops_core::skill::Skill> {
         let _ = std::fs::write(target, bytes);
     }
     wisp_ops_core::skill::list(&folder)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Fleet, HostDraft};
+    use wisp_ops_engine::config::AuthMethod;
+
+    fn fleet(tag: &str) -> (Fleet, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("wisp-ops-fleet-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let fleet = Fleet::open_keyed(&root, true);
+        fleet.save_host(None, HostDraft { name: "cpu".into(), ssh: "10.0.0.9".into(), user: "ops".into(), ..Default::default() }).unwrap();
+        (fleet, root)
+    }
+
+    fn names(fleet: &Fleet) -> Vec<String> {
+        fleet.vault.list().unwrap().entries.into_iter().map(|entry| entry.name).collect()
+    }
+
+    #[test]
+    fn a_credential_made_in_the_bind_dialog_is_stored_and_linked_at_once() {
+        let (fleet, root) = fleet("bind");
+        fleet.create_and_bind("cpu", false, "cpu-ops", "ops", "s3cret", "", true).unwrap();
+        fleet.create_and_bind("cpu", true, "cpu-sudo", "", "s3cret", "", false).unwrap();
+        assert_eq!(names(&fleet), ["cpu-ops", "cpu-sudo"]);
+        let host = fleet.inventory().host("cpu").cloned().unwrap();
+        assert_eq!(host.login_secret.as_deref(), Some("local:cpu-ops"));
+        assert_eq!(host.auth, Some(AuthMethod::Password));
+        assert_eq!(host.sudo_secret.as_deref(), Some("local:cpu-sudo"));
+        // A name already taken, an empty password, a host not in the inventory: nothing is written.
+        assert!(fleet.create_and_bind("cpu", true, "cpu-ops", "", "other", "", true).is_err());
+        assert!(fleet.create_and_bind("cpu", true, "cpu-new", "", "", "", true).is_err());
+        assert!(fleet.create_and_bind("gpu", true, "gpu-sudo", "", "x", "", true).is_err());
+        assert_eq!(names(&fleet), ["cpu-ops", "cpu-sudo"]);
+        assert_eq!(fleet.inventory().host("cpu").and_then(|host| host.sudo_secret.clone()).as_deref(), Some("local:cpu-sudo"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_link_that_cannot_be_written_takes_the_new_credential_back_out() {
+        let (fleet, root) = fleet("rollback");
+        // Another save holding `managed.json` makes the link fail after the vault was written.
+        std::fs::create_dir(root.join("managed.json.lock")).unwrap();
+        assert!(fleet.create_and_bind("cpu", false, "cpu-ops", "ops", "s3cret", "", true).is_err());
+        std::fs::remove_dir(root.join("managed.json.lock")).unwrap();
+        assert!(names(&fleet).is_empty());
+        assert_eq!(fleet.inventory().host("cpu").and_then(|host| host.login_secret.clone()), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

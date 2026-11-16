@@ -2,7 +2,7 @@
 //! view, `Workspace`; every click is a `Cmd` value, wired with
 //! `self.on(Cmd::…, cx)` and carried out in `Workspace::run`. The pages
 //! (`overview.rs`, `servers.rs`, `vault.rs`, `tasks.rs`, `audit.rs`,
-//! `settings.rs`) and the assistant (`chat.rs`) are `impl Workspace` blocks.
+//! `settings.rs`, `assistant.rs`) and the assistant (`chat.rs`) are `impl Workspace` blocks.
 //!
 //! Nothing is read from disk or over SSH while drawing: what the pages show
 //! is kept in `View` and read again by `Workspace::reload` after anything
@@ -17,7 +17,7 @@ use crate::ops::{Fleet, View};
 use crate::theme::{self, Theme, text_px};
 use crate::ui;
 use gpui::{prelude::FluentBuilder, *};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,6 +35,8 @@ pub enum Page {
     Tasks,
     Vault,
     Audit,
+    /// The assistant as a page of its own, with its past conversations beside it.
+    Assistant,
     Settings,
 }
 
@@ -49,6 +51,7 @@ impl Page {
             Page::Tasks => "例行任务",
             Page::Vault => "密码库",
             Page::Audit => "操作审计",
+            Page::Assistant => "助手",
             Page::Settings => "设置",
         }
     }
@@ -63,6 +66,7 @@ impl Page {
             Page::Tasks => "list-todo",
             Page::Vault => "plug",
             Page::Audit => "history",
+            Page::Assistant => "message-square",
             Page::Settings => "settings-gear",
         }
     }
@@ -127,6 +131,8 @@ pub enum Cmd {
     SetPolicy(&'static str, &'static str),
     BindCredential(String, bool),
     PickCredential(String),
+    /// In the bind dialog: write a new credential, stored and linked by 保存.
+    BindNewCredential,
     TestCredential,
     HostSearchChanged,
     // ---- overview
@@ -146,6 +152,14 @@ pub enum Cmd {
     // ---- long-running tasks
     CheckLongJobs(String),
     SetLongHours(u32),
+    /// Fold or unfold a server's card.
+    ToggleLongHost(String),
+    /// Fold (true) or unfold every server's card.
+    FoldLongHosts(bool),
+    /// Put a user in a server's filter, or take them out: server, user.
+    LongUser(String, String),
+    /// Set a server's filter to this text (empty clears it).
+    LongFilter(String, String),
     // ---- security
     ScanAttacks(String),
     OpenAttack(String),
@@ -247,6 +261,9 @@ pub struct Workspace {
     pub disk: crate::disk::DiskState,
     // ---- long-running tasks and security: the hosts being checked right now, and the triage laid open.
     pub long_working: HashSet<String>,
+    /// The servers whose long-task cards are folded, and each checked server's filter.
+    pub long_folded: HashSet<String>,
+    pub long_filters: HashMap<String, (Entity<TextInput>, Subscription)>,
     pub attack_working: HashSet<String>,
     pub open_attack: Option<String>,
     // ---- audit
@@ -290,14 +307,16 @@ impl Workspace {
         })];
         let chat = Chat::new(cx);
         subscriptions.push(cx.subscribe(&chat.input, |this: &mut Self, _, event: &InputEvent, cx| this.chat_input(*event, cx)));
+        subscriptions.push(cx.subscribe(&chat.search, |_: &mut Self, _, event: &InputEvent, cx| if *event == InputEvent::Changed { cx.notify() }));
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
         this.load_skills();
+        this.sync_long_filters(cx);
         if this.view.hosts.is_empty() { this.page = Page::Servers }
         this
     }
@@ -367,6 +386,7 @@ impl Workspace {
         self.view = self.fleet.view();
         self.view.audit = self.fleet.audit(self.audit_host.as_deref(), self.audit_hours, crate::audit::AUDIT_ROWS);
         if self.selected_host.as_ref().is_some_and(|name| !self.view.hosts.iter().any(|host| &host.name == name)) { self.selected_host = None }
+        self.sync_long_filters(cx);
         cx.notify();
     }
 
@@ -460,6 +480,9 @@ impl Workspace {
                 if self.page != Page::Servers { items.push(item(t("查看详情"), false, None, Cmd::SelectHost(Some(name.clone())))) }
                 items.push(item(t("查看磁盘占用"), false, None, Cmd::DiskHost(name.clone())));
                 items.push(item(t("查看操作审计"), false, None, Cmd::AuditHost(Some(name.clone()))));
+                breaks.push(items.len());
+                items.push(item(t("配置普通用户…"), false, None, Cmd::BindCredential(name.clone(), false)));
+                items.push(item(t("配置 sudoer…"), false, None, Cmd::BindCredential(name.clone(), true)));
                 if self.view.hosts.iter().any(|host| host.name == name && host.managed) {
                     breaks.push(items.len());
                     items.push(item(t("编辑服务器"), false, None, Cmd::EditHost(name.clone())));
@@ -492,7 +515,9 @@ impl Workspace {
         self.menu = None;
         match cmd {
             Cmd::SetPage(page) => {
+                if page == Page::Assistant && self.page != Page::Assistant { self.chat.back = self.page }
                 self.page = page;
+                if page == Page::Assistant { self.enter_assistant(window, cx) }
                 if matches!(page, Page::Audit | Page::Overview | Page::Tasks | Page::LongJobs | Page::Security) { self.reload(cx) }
                 if page == Page::Disk { self.load_disk(cx) }
             }
@@ -500,13 +525,18 @@ impl Workspace {
                 self.reload(cx);
                 self.say(t("已重新读取"), cx);
             }
+            // On the assistant's own page there is no panel to fold: the shortcut goes back to the page it came from.
+            Cmd::ToggleChat if self.page == Page::Assistant => self.run(Cmd::SetPage(self.chat.back), window, cx),
             Cmd::ToggleChat => {
                 self.settings.chat_hidden = !self.settings.chat_hidden;
                 self.save_settings(cx);
             }
             Cmd::Ask => self.ask(cx),
             Cmd::StopChat => self.stop_chat(cx),
-            Cmd::NewChat => self.new_chat(cx),
+            Cmd::NewChat => {
+                self.new_chat(cx);
+                if self.page == Page::Assistant { self.focus_composer(window, cx) }
+            }
             Cmd::Suggest(text) => {
                 self.show_chat(cx);
                 self.chat.input.update(cx, |input, cx| input.set_text(&text, cx));
@@ -539,7 +569,10 @@ impl Workspace {
             }
             Cmd::ShowOutput(at) => self.show_output(at, window, cx),
             Cmd::ToggleHistory => self.toggle_history(cx),
-            Cmd::OpenChat(id) => self.open_chat(&id, cx),
+            Cmd::OpenChat(id) => {
+                self.open_chat(&id, cx);
+                if self.page == Page::Assistant { self.focus_composer(window, cx) }
+            }
             Cmd::DeleteChat(id) => self.delete_chat(&id, cx),
             Cmd::RevokeGrants => {
                 self.fleet.revoke_grants(&self.chat.session);
@@ -557,9 +590,10 @@ impl Workspace {
                 self.modal = None;
                 self.run_confirmed(*cmd, window, cx);
             }
-            cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
+            cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::BindNewCredential | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
             cmd @ (Cmd::DiskHost(_) | Cmd::AskFullScan(_) | Cmd::DiskScan(..) | Cmd::DiskPath(_) | Cmd::DiskZoom(_) | Cmd::DiskList(_) | Cmd::ToggleDiskFree) => self.run_disk(cmd, cx),
             Cmd::CheckLongJobs(selector) => self.check_long_jobs(selector, false, cx),
+            cmd @ (Cmd::ToggleLongHost(_) | Cmd::FoldLongHosts(_) | Cmd::LongUser(..) | Cmd::LongFilter(..)) => self.run_longrun(cmd, cx),
             Cmd::ScanAttacks(selector) => self.scan_attacks(selector, cx),
             Cmd::OpenAttack(host) => self.open_attack = if self.open_attack.as_ref() == Some(&host) { None } else { Some(host) },
             Cmd::SelectRun(host, at) => {
@@ -638,8 +672,9 @@ impl Workspace {
         if let Some(start) = start { window.focus(&start) }
     }
 
+    /// Bring the panel back, unless the assistant's own page is open: there the conversation is on show already.
     pub fn show_chat(&mut self, cx: &mut Context<Self>) {
-        if self.settings.chat_hidden {
+        if self.settings.chat_hidden && self.page != Page::Assistant {
             self.settings.chat_hidden = false;
             self.save_settings(cx);
         }
@@ -691,9 +726,11 @@ impl Render for Workspace {
             Page::Tasks => self.render_tasks(window, cx),
             Page::Vault => self.render_vault(window, cx),
             Page::Audit => self.render_audit(window, cx),
+            Page::Assistant => self.render_assistant(window, cx),
             Page::Settings => self.render_settings(window, cx),
         };
-        let chat_shown = !self.settings.chat_hidden;
+        // The assistant's page draws the conversation itself: the panel (and its edge) is left out, whatever `chat_hidden` says.
+        let chat_shown = !self.settings.chat_hidden && self.page != Page::Assistant;
         let chat = chat_shown.then(|| self.render_chat(window, cx));
         let chat_width = self.chat_width();
         div()
@@ -815,8 +852,7 @@ impl Workspace {
                     .child(row(Page::Tasks, None, self, cx))
                     .child(row(Page::Audit, None, self, cx))
                     .child(div().h(px(10.)))
-                    // Not a page: the assistant beside whichever page is open.
-                    .child(div().id("nav-assistant").flex().items_center().gap(px(9.)).h(text_px(32.)).px(px(10.)).rounded(px(7.)).cursor_pointer().hover(|s| s.bg(Theme::hover())).on_click(self.on(Cmd::FocusChat, cx)).child(ui::icon("message-square", 15., Theme::text_secondary())).child(div().flex_1().min_w_0().truncate().child(t("助手"))))
+                    .child(row(Page::Assistant, None, self, cx))
                     .child(div().flex_1())
                     .child(div().h(px(1.)).mx(px(6.)).my(px(6.)).bg(Theme::line()))
                     .child(row(Page::Vault, None, self, cx))
@@ -875,7 +911,7 @@ impl Workspace {
             .gap(px(8.))
             .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().text_size(text_px(ui::HEAD_TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string())).child(div().truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_tertiary()).child(about.into())))
             .children(actions)
-            .when(self.settings.chat_hidden, |d| d.child(ui::ghost_button("open-assistant", Some("message-square"), Some(t("助手").into())).tooltip(ui::tip(t("打开助手"))).on_click(self.on(Cmd::FocusChat, cx))))
+            .when(self.settings.chat_hidden && self.page != Page::Assistant, |d| d.child(ui::ghost_button("open-assistant", Some("message-square"), Some(t("助手").into())).tooltip(ui::tip(t("打开助手"))).on_click(self.on(Cmd::FocusChat, cx))))
     }
 }
 
@@ -912,6 +948,7 @@ impl Workspace {
                     "tasks" => Page::Tasks,
                     "vault" => Page::Vault,
                     "audit" => Page::Audit,
+                    "assistant" => Page::Assistant,
                     "settings" => Page::Settings,
                     _ => Page::Overview,
                 };
@@ -946,13 +983,28 @@ impl Workspace {
             "zoom" => self.run(Cmd::DiskZoom(arg.to_string()), window, cx),
             "disk-list" => self.run(Cmd::DiskList(arg != "map"), window, cx),
             "long-check" => self.run(Cmd::CheckLongJobs(arg.to_string()), window, cx),
+            // `long-fold:<host>`, or `long-fold:all` / `long-fold:none`.
+            "long-fold" => self.run(match arg { "all" => Cmd::FoldLongHosts(true), "none" => Cmd::FoldLongHosts(false), host => Cmd::ToggleLongHost(host.to_string()) }, window, cx),
+            // `long-filter:<host>=<words, + for spaces>`; `long-user:<host>=<user>`.
+            "long-filter" | "long-user" => {
+                let (host, text) = arg.split_once('=').unwrap_or((arg, ""));
+                let (host, text) = (host.to_string(), text.replace('+', " "));
+                self.run(if name == "long-user" { Cmd::LongUser(host, text) } else { Cmd::LongFilter(host, text) }, window, cx);
+            }
             "attack-scan" => self.run(Cmd::ScanAttacks(arg.to_string()), window, cx),
             "open-attack" => self.run(Cmd::OpenAttack(arg.to_string()), window, cx),
             "add-host" => self.run(Cmd::AddHost, window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),
+            // The credential dialog of a server: `bind:web-01` for its login, `bind-sudo:web-01`; `bind-new` writes a new one.
+            "bind" | "bind-sudo" => self.run(Cmd::BindCredential(arg.to_string(), name == "bind-sudo"), window, cx),
+            "bind-new" => self.run(Cmd::BindNewCredential, window, cx),
+            // The dialog's button: Enter in a field needs the window to be the active one.
+            "submit" => self.run(Cmd::SubmitModal, window, cx),
             "history" => self.run(Cmd::ToggleHistory, window, cx),
+            "find-chat" => self.chat.search.update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)),
+            "open-chat" => self.run(Cmd::OpenChat(arg.to_string()), window, cx),
             "tab" => self.run(Cmd::SetSettingsTab(match arg { "general" => crate::settings::Tab::General, "skills" => crate::settings::Tab::Skills, _ => crate::settings::Tab::Models }), window, cx),
             "shot" => {
                 let path = PathBuf::from(arg);
