@@ -440,7 +440,7 @@
  "模型服务": "Model services",
  "模型服务、外观和助手可以读的技能；都只保存在这台电脑上": "Model services, appearance and the skills the assistant may read; all kept on this computer only",
  "模型没有返回内容。": "The model returned nothing.",
- "模型请求走的代理。SSH 连接不受它影响，仍按 ~/.ssh/config。": "The proxy model requests go through. SSH connections are not affected and follow ~/.ssh/config.",
+ "模型请求、更新检查、外部通知和设备同步走的代理（发往本机的请求不走）。SSH 连接不受它影响，仍按 ~/.ssh/config。": "The proxy for model requests, update checks, notifications and device sync (requests to this computer go direct). SSH connections are not affected and follow ~/.ssh/config.",
  "正在巡检…": "Inspecting…",
  "正在思考…": "Thinking…",
  "正在扫描，目录多时需要几分钟…": "Scanning; this takes minutes with many directories…",

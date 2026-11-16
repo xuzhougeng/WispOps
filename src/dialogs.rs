@@ -89,6 +89,8 @@ pub struct TaskForm {
     pub origin: crate::templates::TaskOrigin,
 }
 
+// One dialog is open at a time: the task form's size is not worth a box at every use of it.
+#[allow(clippy::large_enum_variant)]
 pub enum Modal {
     Confirm { title: String, message: String, label: String, danger: bool, cmd: Cmd },
     /// Something to read: what a tool returned, an inspection's findings.
