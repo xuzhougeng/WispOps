@@ -49,13 +49,13 @@ cargo clippy --all-targets                       # 应当没有警告
 | 磁盘 | 每块磁盘被什么占着的方块图：方块是目录，面积按占用，大方块里显示下一级，点击进入；也可切成列表。第一次扫描选「用户目录」（不需要 root）或「全盘」（以 root 统计每个本地文件系统），之后按间隔自动增量扫描，标出增长的目录 |
 | 长时任务 | 各服务器上运行超过阈值（默认 24 小时）的用户进程和 Slurm 作业：谁的、跑了多久、CPU 和内存、是否空闲或已暂停；登录 shell、tmux 这类会话进程不算 |
 | 安全 | 最近 24 小时的登录攻击：失败次数、来源地址、尝试的账号、逐小时分布，以及成功登录和其他可疑迹象；认证日志要 root 才能读，能用 root 的服务器自动用 |
-| 例行任务 | 把只读检查（巡检、磁盘、目录空间、新增文件、安全排查、自定义只读命令）绑到服务器上，手动或定时运行并记录（每天、固定间隔，或按任务时区计算的五字段 cron 表达式）；报告由助手按需读已采集的结果来写 |
+| 例行任务 | 把只读检查（巡检、磁盘、目录空间、新增文件、安全排查、自定义只读命令）绑到服务器上，手动或定时运行并记录（每天、固定间隔，或按任务时区计算的五字段 cron 表达式）；报告由助手按需读已采集的结果来写。可以从任务模板库开始（13 个内置模板，或自己存的；模板不含服务器和 sudo，参数填进命令时是一个加引号的词），也可以把已有任务存为模板；助手用 `ops_template_draft` 提议的模板草稿要你审核保存，它不能自己建任务或排时间 |
 | 检查脚本 | 例行任务页的第二个标签：助手用 `ops_script_draft` 起草只读的 shell 检查脚本，你读过全文并接受后进入脚本库，才能被例行任务运行（按退出码判断正常 / 警告 / 严重，第一行输出是摘要）。起草、接受、每次运行都按与助手相同的分类器和拒绝清单校验，脚本里不能有 sudo |
 | 操作审计 | 助手、窗口、任务执行的每一条远程命令：风险、授权方式、结果 |
 | 外部通知 | 设置 › 通用：把自动巡检发现的状态变化（变差、不可达、恢复；第一次只作基准）和例行任务的结果（每次 / 发现问题时 / 问题有变化时）发到企业微信、钉钉、飞书或通用 webhook，可加签或带 Bearer 令牌，有「发送测试通知」。在后台发送、10 秒超时，失败不影响巡检和任务，只在设置页安静地标出；手写在任务里的 `notify`、`notifyOnlyProblems`、`notifyOnChange`、`quietHours` 照插件的规则生效 |
 | 密码库 | XChaCha20-Poly1305 加密，密钥在 macOS 钥匙串 / Windows DPAPI / `0600` 文件 |
 | 设备同步 | 设置 → 通用 → WebDAV 设备同步：把一份加密快照传到 WebDAV 文件夹（默认坚果云），在另一台设备上预览后导入。快照含界面里添加的服务器、凭据关联、权限设置、任务、任务模板（`task-templates.json`，原样携带）和整个密码库，可选服务器 `identityFile` 指定的 SSH 私钥（导入后写到 `ssh-keys/`）；上传前用同步口令以 scrypt + XChaCha20-Poly1305 加密，格式与插件相同，每次上传是新文件。不同步密码库密钥、`inventory.yml`、`config.json`、`settings.json`、审计和历史、限时授权、定时任务的开关。导入替换本机数据、不合并，先把原数据加密备份到 `sync-backups/`；预览后本机或云端有变化、或有定时任务开着时拒绝导入。手动触发，不定时同步。应用密码和同步口令用密码库的密钥加密保存在 `sync.json` |
-| 助手 | 常驻右侧。工具：`ops_hosts` `ops_inspect` `ops_exec` `ops_disk` `ops_files` `ops_security` `ops_change` `ops_task` `ops_history` `ops_script_draft`，外加读技能的 `use_skill` |
+| 助手 | 常驻右侧。工具：`ops_hosts` `ops_inspect` `ops_exec` `ops_disk` `ops_files` `ops_security` `ops_change` `ops_task` `ops_template_draft` `ops_script_draft` `ops_history`，外加读技能的 `use_skill` |
 
 助手输入框里的 `/inspect`、`/disk`、`/security`、`/files`、`/history`、`/new` 是内置命令。
 
@@ -75,6 +75,7 @@ cargo clippy --all-targets                       # 应当没有警告
 
 - `inventory.yml`：手写的清单（hosts / groups / tasks），可选；格式与插件相同
 - `managed.json`：在界面里添加的服务器、凭据关联、权限覆盖、任务
+- `task-templates.json`、`template-drafts.json`：自己存的任务模板，助手提议、等待审核的模板草稿
 - `config.json`：可选，覆盖默认配置（`defaultPolicy`、`denyPatterns`、`ssh.*`、`limits.*`、`thresholds.*` 等）
 - `vault.json`、`audit/`、`inspections/`、`tasks/`、`notifications/`（每次任务通知的结果）、`notify-state.json`（各服务器上次通知的状态）、`conversations/` 等
 - `sync.json`（WebDAV 设备同步的设置，密码已加密）、`sync-backups/`、`ssh-keys/`、`task-templates.json`：用了设备同步才有
@@ -93,4 +94,4 @@ cargo clippy --all-targets                       # 应当没有警告
 
 ## 相对插件没有做的
 
-任务模板草稿（`ops_template_draft`）、任务模板库、WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）。
+WispTerm 兼容、服务检查 / 阈值覆盖 / 静音的编辑界面（引擎已支持，可手写 `managed.json`）。

@@ -73,6 +73,7 @@ impl Workspace {
             cron: self.modal_input(crate::ops::DEFAULT_CRON, if known.cron.is_empty() { crate::ops::DEFAULT_CRON } else { &known.cron }, false, cx),
             sudo: known.sudo,
             script: known.script.clone(),
+            origin: crate::templates::TaskOrigin::of(&known),
             editing,
         };
         self.open_modal(Modal::Task(form), cx);
@@ -96,7 +97,11 @@ impl Workspace {
             cron: read(&form.cron),
             sudo: form.sudo,
             script: if form.playbook == "script" { form.script.clone() } else { String::new() },
+            days: form.origin.days,
+            hours: form.origin.hours,
+            template: form.origin.template.clone(),
         };
+        let draft = Self::fill_from_template(form, draft, cx)?;
         self.fleet.save_task(form.editing.as_deref(), draft)?;
         self.reload(cx);
         Ok(())
@@ -172,6 +177,7 @@ impl Workspace {
             .gap(px(12.))
             .child(div().flex().gap(px(12.)).child(div().w(px(200.)).child(field("标识（字母、数字、- _ .）", &form.name, window, cx))).child(div().flex_1().child(field("说明", &form.description, window, cx))))
             .child(field("服务器（选择器）", &form.targets, window, cx))
+            .children(self.template_fields(form, window, cx))
             .child(ui::form_row(t("检查内容").to_string(), playbooks))
             .when(wants_paths, |d| d.child(field("路径（逗号分隔）", &form.paths, window, cx)))
             .when(form.playbook == "script", |d| d.child(ui::form_row(t("检查脚本").to_string(), self.script_choices(&form.script, cx))))
@@ -212,9 +218,9 @@ impl Workspace {
 
     pub fn render_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         if self.scripts.tab { return self.render_scripts(window, cx) }
-        let actions = vec![self.tasks_tabs(cx), ui::primary_button("task-add", t("新建任务")).child(ui::icon("plus", 14., Theme::on_accent())).on_click(self.on(Cmd::AddTask, cx)).into_any_element()];
+        let actions = vec![self.tasks_tabs(cx), ui::secondary_button("task-from-template", t("从模板新建")).child(ui::icon("library", 14., Theme::text_secondary())).on_click(self.on(Cmd::OpenTemplates, cx)).into_any_element(), ui::primary_button("task-add", t("新建任务")).child(ui::icon("plus", 14., Theme::on_accent())).on_click(self.on(Cmd::AddTask, cx)).into_any_element()];
         let body: AnyElement = if self.view.tasks.is_empty() {
-            ui::empty_state("list-todo", t("还没有例行任务"), t("例行任务把一项只读检查（巡检、磁盘、新增文件、安全排查，或你写的只读命令）绑到一些服务器上，按时运行并记录。正常的运行不消耗模型；想看报告时再让助手读已经采集的结果。")).child(ui::primary_button("task-empty-add", t("新建任务")).on_click(self.on(Cmd::AddTask, cx))).into_any_element()
+            ui::empty_state("list-todo", t("还没有例行任务"), t("例行任务把一项只读检查（巡检、磁盘、新增文件、安全排查，或你写的只读命令）绑到一些服务器上，按时运行并记录。正常的运行不消耗模型；想看报告时再让助手读已经采集的结果。")).child(div().flex().gap(px(8.)).child(ui::secondary_button("task-empty-template", t("从模板新建")).on_click(self.on(Cmd::OpenTemplates, cx))).child(ui::primary_button("task-empty-add", t("新建任务")).on_click(self.on(Cmd::AddTask, cx)))).into_any_element()
         } else {
             div()
                 .id("tasks-list")
@@ -277,12 +283,13 @@ impl Workspace {
                                 .child(ui::secondary_button(SharedString::from(format!("task-run-{name}")), if running { t("正在运行…") } else { t("运行一次") }).h(text_px(28.)).when(running, |b| b.opacity(0.5)).on_click(self.on(Cmd::RunTask(name.clone()), cx)))
                                 .when(task.last.is_some(), |d| d.child(ui::secondary_button(SharedString::from(format!("task-report-{name}")), t("让助手汇报")).h(text_px(28.)).child(ui::icon("sparkle", 12., Theme::accent())).on_click(self.on(Cmd::Suggest(tf!("读取例行任务 {name} 最近一次运行的结果（ops_task name={name} mode=last，不要重新运行），按它的要求写报告。", "Read the latest run of task {name} (ops_task name={name} mode=last; do not run it again) and write the report it asks for.")), cx))))
                                 .child(div().flex_1())
+                                .child(ui::ghost_button(SharedString::from(format!("task-template-{name}")), Some("library"), None).tooltip(ui::tip(t("存为模板"))).on_click(self.on(Cmd::SaveAsTemplate(name.clone()), cx)))
                                 .when(task.managed, |d| d.child(ui::ghost_button(SharedString::from(format!("task-edit-{name}")), Some("pen-line"), None).tooltip(ui::tip(t("编辑"))).on_click(self.on(Cmd::EditTask(name.clone()), cx))).child(ui::ghost_button(SharedString::from(format!("task-delete-{name}")), Some("bin"), None).tooltip(ui::tip(t("删除"))).on_click(self.on(Cmd::DeleteTask(name.clone()), cx))))
                                 .when(!task.managed, |d| d.child(div().text_size(text_px(12.)).text_color(Theme::text_placeholder()).child(t("写在 inventory.yml 里")))),
                         )
                 }))
                 .into_any_element()
         };
-        div().flex().flex_col().size_full().child(self.page_head(t("例行任务"), t("按时运行的只读检查：采集和记录不消耗模型，报告由助手按需来写"), actions, cx)).child(body).into_any_element()
+        div().flex().flex_col().size_full().child(self.page_head(t("例行任务"), t("按时运行的只读检查：采集和记录不消耗模型，报告由助手按需来写"), actions, cx)).children(self.drafts_band(cx)).child(body).into_any_element()
     }
 }

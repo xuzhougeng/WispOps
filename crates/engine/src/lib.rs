@@ -39,6 +39,8 @@ pub mod store;
 pub mod sync;
 /// The sync snapshot's encrypted envelope (scrypt, XChaCha20-Poly1305), the plugin's format.
 pub mod sync_crypto;
+/// The task template library: built-in and saved templates, and the model's drafts.
+pub mod templates;
 /// Epoch-millisecond clock helpers and ISO-8601 formatting.
 pub mod time;
 /// The encrypted password vault.

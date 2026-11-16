@@ -176,6 +176,10 @@ pub struct TaskDraft {
     pub sudo: bool,
     /// The check script of the `script` playbook, from the library.
     pub script: String,
+    /// Not in the form; kept as they were: the windows of `new-files` and `security`, and the template the task came from.
+    pub days: Option<u64>,
+    pub hours: Option<u64>,
+    pub template: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -239,6 +243,7 @@ pub struct View {
     pub credentials: Vec<CredentialView>,
     pub tasks: Vec<TaskView>,
     pub audit: Vec<AuditRow>,
+    pub templates: crate::templates::Library,
     /// The latest check for long-running tasks of each server that has one.
     pub long_runs: BTreeMap<String, wisp_ops_collect::longrun::LongRunSnapshot>,
     /// The latest security triage of each server that has one.
@@ -783,7 +788,7 @@ impl Fleet {
             TaskView { name: task.name.clone(), draft: draft_of(task), managed: loaded.managed_tasks.contains(&task.name), scheduled: timed.is_some(), enabled: entry.is_some(), when: describe_when(task.schedule.as_ref()), next, last: last.map(|record| TaskLast { at: record.at.clone(), problems: record.has_problems(), summary: record.summary() }), error: entry.and_then(|entry| entry.last_error.clone()) }
         }).collect();
         let limits = Limits { gpu_temp: self.thresholds.gpu_temp_warn_c, disk: (self.thresholds.disk_warn_pct, self.thresholds.disk_crit_pct), mem_avail: (self.thresholds.mem_avail_warn_pct, self.thresholds.mem_avail_crit_pct), load_per_core: (self.thresholds.load_per_core_warn, self.thresholds.load_per_core_crit) };
-        View { limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" }, scripts: self.scripts_view() }
+        View { templates: self.templates(loaded.inventory.tasks()), limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" }, scripts: self.scripts_view() }
     }
 
     pub fn audit(&self, host: Option<&str>, hours: u32, limit: usize) -> Vec<AuditRow> {
@@ -995,7 +1000,7 @@ impl Fleet {
             if let Some(pattern) = self.deny.matches(command) { return Err(format!("这条命令被拒绝清单拦下（{pattern}）：{command}")) }
         }
         // A timed task of the window runs on its timer and the assistant reports when asked.
-        let spec = TaskSpec { name: draft.name.clone(), description: some(draft.description), targets: draft.targets, playbook, instruction: some(draft.instruction), schedule, paths: draft.paths, commands: draft.commands, sudo: draft.sudo.then_some(true), report: Some(config::ReportMode::Problems), script, ..Default::default() };
+        let spec = TaskSpec { name: draft.name.clone(), description: some(draft.description), targets: draft.targets, playbook, instruction: some(draft.instruction), schedule, paths: draft.paths, commands: draft.commands, sudo: draft.sudo.then_some(true), report: Some(config::ReportMode::Problems), script, days: draft.days, hours: draft.hours, template: draft.template, ..Default::default() };
         config::validate_task(&spec)?;
         let exists = self.inventory().task(&spec.name).is_some();
         let (name, timed) = (spec.name.clone(), spec.schedule.is_some());
@@ -1240,6 +1245,9 @@ fn draft_of(task: &TaskSpec) -> TaskDraft {
         cron: schedule.and_then(|schedule| schedule.cron.clone()).unwrap_or_else(|| DEFAULT_CRON.into()),
         sudo: task.sudo == Some(true),
         script: task.script.clone().unwrap_or_default(),
+        days: task.days,
+        hours: task.hours,
+        template: task.template.clone(),
     }
 }
 

@@ -31,6 +31,7 @@ mod servers;
 mod settings;
 mod sync;
 mod tasks;
+mod templates;
 mod theme;
 mod tools;
 mod ui;
