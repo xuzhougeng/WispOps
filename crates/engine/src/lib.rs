@@ -5,6 +5,10 @@
 
 /// Managed changes: backup → apply → verify → rollback as one remote shell transaction.
 pub mod change;
+/// Five-field cron expressions evaluated in IANA time zones.
+pub mod cron;
+/// Owner-reviewed check scripts, the model's drafts of them, and their output contract.
+pub mod check_scripts;
 /// Configuration types, defaults and validation.
 pub mod config;
 /// Connection diagnosis (DNS, TCP, SSH banner) without logging in.
@@ -15,6 +19,8 @@ pub mod fsutil;
 pub mod inventory;
 /// JavaScript-flavoured regular expressions on top of the `regex` crate.
 pub mod jsre;
+/// Outgoing webhook notifications: payloads, signing, send/skip decisions (no network).
+pub mod notify;
 /// Revision-checked atomic JSON state and the application-managed `managed.json`.
 pub mod managed;
 /// Grants, per-host capability decisions and the gate for one planned action.
@@ -29,7 +35,15 @@ pub mod ssh;
 pub mod ssh_config;
 /// Audit log, inspection history and other bounded JSON Lines stores.
 pub mod store;
+/// Device sync: encrypted snapshots of the managed state and vault in a WebDAV folder.
+pub mod sync;
+/// The sync snapshot's encrypted envelope (scrypt, XChaCha20-Poly1305), the plugin's format.
+pub mod sync_crypto;
+/// The task template library: built-in and saved templates, and the model's drafts.
+pub mod templates;
 /// Epoch-millisecond clock helpers and ISO-8601 formatting.
 pub mod time;
 /// The encrypted password vault.
 pub mod vault;
+/// The WebDAV verbs device sync uses, over an injected transport.
+pub mod webdav;

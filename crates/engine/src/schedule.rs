@@ -1,6 +1,7 @@
 //! Wall-clock arithmetic for task schedules: when a daily or weekly task was last due in its
 //! zone, whether the application's timer should run it now, and whether it skipped a slot.
-//! Cron expressions are not evaluated. Every function takes `now` (epoch milliseconds).
+//! Cron expressions are evaluated by [`crate::cron`] in the same zone. Every function takes `now`
+//! (epoch milliseconds).
 
 use std::str::FromStr;
 
@@ -8,6 +9,7 @@ use chrono::{Datelike, NaiveDate, TimeZone, Timelike};
 use chrono_tz::Tz;
 
 use crate::config::TaskSchedule;
+use crate::cron;
 use crate::time::{parse_iso, to_iso};
 
 /// Calendar fields of an instant in a zone.
@@ -69,8 +71,25 @@ fn hour_minute(daily: &str) -> Option<(u32, u32)> {
     Some((hour.parse().ok()?, minute.parse().ok()?))
 }
 
-/// The latest instant at or before `now` when a daily or weekly schedule was due; `None` for cron and intervals.
+/// A schedule's cron expression with its zone, when it has one.
+fn cron_of(schedule: &TaskSchedule, default_zone: &str) -> Result<Option<(cron::Cron, Tz)>, String> {
+    let Some(expression) = &schedule.cron else { return Ok(None) };
+    let parsed = cron::parse(expression).map_err(|error| format!("cron \"{expression}\": {error}"))?;
+    Ok(Some((parsed, parse_zone(schedule.time_zone.as_deref().unwrap_or(default_zone))?)))
+}
+
+/// How long before a slot a run still covers it (clock skew, a manual run): five minutes, or for
+/// a cron schedule that runs more often, half the time since its previous slot.
+fn cover_ms(schedule: &TaskSchedule, default_zone: &str, due: i64) -> Result<i64, String> {
+    let Some((cron, zone)) = cron_of(schedule, default_zone)? else { return Ok(COVER_MS) };
+    Ok(cron.latest_at_or_before(zone, due - 1).map_or(COVER_MS, |previous| COVER_MS.min((due - previous) / 2)))
+}
+
+const COVER_MS: i64 = 5 * 60_000;
+
+/// The latest instant at or before `now` when a daily, weekly or cron schedule was due; `None` for intervals.
 pub fn previous_due(schedule: &TaskSchedule, default_zone: &str, now: i64) -> Result<Option<i64>, String> {
+    if let Some((cron, zone)) = cron_of(schedule, default_zone)? { return Ok(cron.latest_at_or_before(zone, now)) }
     let Some(daily) = &schedule.daily else { return Ok(None) };
     let (hour, minute) = hour_minute(daily).ok_or_else(|| format!("invalid daily time \"{daily}\""))?;
     let zone = schedule.time_zone.as_deref().unwrap_or(default_zone);
@@ -95,8 +114,9 @@ pub struct MissedRun {
 }
 
 /// Whether a scheduled task appears to have skipped its latest slot: no run recorded at or after
-/// the due time once the grace period passed. Intervals compare against the last run; cron
-/// schedules are not evaluated and never report a miss.
+/// the due time once the grace period passed. Intervals compare against the last run; a cron
+/// schedule examines its latest slot at least the grace period old, so one that runs more often
+/// than the grace period still reports a miss.
 pub fn missed_run(schedule: &TaskSchedule, default_zone: &str, last_run: Option<&str>, now: i64) -> Result<MissedRun, String> {
     let last = last_run.and_then(parse_iso);
     if let Some(every) = schedule.every_minutes {
@@ -105,31 +125,34 @@ pub fn missed_run(schedule: &TaskSchedule, default_zone: &str, last_run: Option<
         let due = last + interval;
         return Ok(MissedRun { due_at: Some(to_iso(due)), missed: now - due > MISSED_GRACE_MS.max(interval) });
     }
-    let Some(due) = previous_due(schedule, default_zone, now)? else { return Ok(MissedRun { due_at: None, missed: false }) };
+    let examined = if schedule.cron.is_some() { now - MISSED_GRACE_MS - 1 } else { now };
+    let Some(due) = previous_due(schedule, default_zone, examined)? else { return Ok(MissedRun { due_at: None, missed: false }) };
     // A run slightly before the slot (clock skew, a manual run) still covers it.
-    let covered = last.is_some_and(|last| last >= due - 5 * 60_000);
+    let covered = last.is_some_and(|last| last >= due - cover_ms(schedule, default_zone, due).unwrap_or(COVER_MS));
     Ok(MissedRun { due_at: Some(to_iso(due)), missed: !covered && now - due > MISSED_GRACE_MS })
 }
 
-/// Whether the application's timer should run a task now. Daily and weekly slots count from the
-/// moment the timer was enabled, so enabling after today's slot waits for tomorrow's; an
-/// interval counts from the later of the last run and enabling. Cron is never due here.
+/// Whether the application's timer should run a task now. Daily, weekly and cron slots count from
+/// the moment the timer was enabled, so enabling after today's slot waits for tomorrow's; an
+/// interval counts from the later of the last run and enabling.
 pub fn due_now(schedule: &TaskSchedule, default_zone: &str, last_run: Option<&str>, enabled_at: &str, now: i64) -> Result<bool, String> {
     let last = last_run.and_then(parse_iso);
     let enabled = parse_iso(enabled_at).unwrap_or(now);
     if let Some(every) = schedule.every_minutes { return Ok(now >= last.unwrap_or(0).max(enabled) + every as i64 * 60_000) }
     let Some(due) = previous_due(schedule, default_zone, now)? else { return Ok(false) };
     if due < enabled { return Ok(false) }
-    Ok(last.is_none_or(|last| last < due - 5 * 60_000))
+    let cover = cover_ms(schedule, default_zone, due)?;
+    Ok(last.is_none_or(|last| last < due - cover))
 }
 
-/// The next instant the application's timer would run a task; `None` for cron.
+/// The next instant the application's timer would run a task; `None` on demand.
 pub fn next_due(schedule: &TaskSchedule, default_zone: &str, last_run: Option<&str>, enabled_at: &str, now: i64) -> Result<Option<i64>, String> {
     let last = last_run.and_then(parse_iso);
     let enabled = parse_iso(enabled_at).unwrap_or(now);
     if let Some(every) = schedule.every_minutes { return Ok(Some(now.max(last.unwrap_or(0).max(enabled) + every as i64 * 60_000))) }
-    if schedule.daily.is_none() { return Ok(None) }
+    if schedule.daily.is_none() && schedule.cron.is_none() { return Ok(None) }
     if due_now(schedule, default_zone, last_run, enabled_at, now)? { return Ok(Some(now)) }
+    if let Some((cron, zone)) = cron_of(schedule, default_zone)? { return Ok(cron.next_after(zone, now)) }
     // The earliest slot after now: probe forward one day at a time and take the first strictly later slot.
     for ahead in 1..=8 {
         if let Some(candidate) = previous_due(schedule, default_zone, now + ahead * 86_400_000)?

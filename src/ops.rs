@@ -167,11 +167,19 @@ pub struct TaskDraft {
     pub paths: Vec<String>,
     pub instruction: String,
     pub commands: Vec<String>,
-    /// `manual`, `daily` or `every`.
+    /// `manual`, `daily`, `every` or `cron`.
     pub schedule: String,
     pub daily: String,
     pub every_minutes: u32,
+    /// Five-field cron expression, evaluated in the configured zone.
+    pub cron: String,
     pub sudo: bool,
+    /// The check script of the `script` playbook, from the library.
+    pub script: String,
+    /// Not in the form; kept as they were: the windows of `new-files` and `security`, and the template the task came from.
+    pub days: Option<u64>,
+    pub hours: Option<u64>,
+    pub template: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -186,7 +194,7 @@ pub struct TaskView {
     pub name: String,
     pub draft: TaskDraft,
     pub managed: bool,
-    /// It has a time the timer can keep (daily or an interval; cron is not kept).
+    /// It has a time the timer can keep (daily, weekly, an interval or cron).
     pub scheduled: bool,
     pub enabled: bool,
     pub when: String,
@@ -235,6 +243,7 @@ pub struct View {
     pub credentials: Vec<CredentialView>,
     pub tasks: Vec<TaskView>,
     pub audit: Vec<AuditRow>,
+    pub templates: crate::templates::Library,
     /// The latest check for long-running tasks of each server that has one.
     pub long_runs: BTreeMap<String, wisp_ops_collect::longrun::LongRunSnapshot>,
     /// The latest security triage of each server that has one.
@@ -243,6 +252,8 @@ pub struct View {
     pub vault_error: Option<String>,
     pub vault_key_place: &'static str,
     pub limits: Limits,
+    /// The check-script library and the drafts waiting for review.
+    pub scripts: crate::check_scripts::ScriptsView,
 }
 
 /// The thresholds the meters and charts are coloured by: (warning, critical).
@@ -377,7 +388,7 @@ impl Fleet {
         Fleet::open_keyed(root, std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file"))
     }
 
-    fn open_keyed(root: &Path, file_key: bool) -> Fleet {
+    pub(crate) fn open_keyed(root: &Path, file_key: bool) -> Fleet {
         let _ = std::fs::create_dir_all(root);
         let mut overrides = std::fs::read_to_string(root.join("config.json")).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok()).filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
         overrides["dataDir"] = Value::String(root.to_string_lossy().into_owned());
@@ -396,6 +407,16 @@ impl Fleet {
 
     pub fn data_dir(&self) -> &Path {
         &self.root
+    }
+
+    /// The vault, for device sync (`crate::sync`): it exports and replaces whole vaults.
+    pub(crate) fn vault(&self) -> &LocalVault {
+        &self.vault
+    }
+
+    /// Whether any task's timer is on: device sync refuses to import over running schedules.
+    pub(crate) fn timers_on(&self) -> bool {
+        !self.timer_state().tasks.is_empty()
     }
 
     fn stamp(&self) -> String {
@@ -651,6 +672,8 @@ impl Fleet {
         let hosts = self.select(selector)?;
         let collect = Collect { sudo: false, tool: format!("window:{origin}"), session: None, authorization: Authorization::ReadOnly, cancel: None };
         let fleet = self.inspect_hosts(&hosts, &collect, "(built-in read-only inspection)");
+        // The automatic inspection reports state changes to the webhooks, off this thread.
+        if origin == "auto" { crate::notify::after_inspection(self.data_dir(), &fleet) }
         let c = &fleet.counts;
         Ok(tf!("巡检完成：正常 {}，警告 {}，严重 {}，不可达 {}", "Inspected: {} ok, {} warning, {} critical, {} unreachable", c.ok + c.info, c.warn, c.crit, c.unreachable))
     }
@@ -757,7 +780,7 @@ impl Fleet {
             let records: Vec<TaskRunRecord> = self.store.read_bounded("tasks", &task.name).unwrap_or_default();
             let last = records.last();
             let entry = timer.tasks.get(&task.name);
-            let timed = task.schedule.as_ref().filter(|schedule| schedule.cron.is_none() && schedule.is_timed());
+            let timed = task.schedule.as_ref().filter(|schedule| schedule.is_timed());
             let next = match (timed, entry) {
                 (Some(schedule), Some(entry)) => schedule::next_due(schedule, zone, last.map(|record| record.at.as_str()), &entry.enabled_at, now).ok().flatten().map(time::to_iso),
                 _ => None,
@@ -765,7 +788,7 @@ impl Fleet {
             TaskView { name: task.name.clone(), draft: draft_of(task), managed: loaded.managed_tasks.contains(&task.name), scheduled: timed.is_some(), enabled: entry.is_some(), when: describe_when(task.schedule.as_ref()), next, last: last.map(|record| TaskLast { at: record.at.clone(), problems: record.has_problems(), summary: record.summary() }), error: entry.and_then(|entry| entry.last_error.clone()) }
         }).collect();
         let limits = Limits { gpu_temp: self.thresholds.gpu_temp_warn_c, disk: (self.thresholds.disk_warn_pct, self.thresholds.disk_crit_pct), mem_avail: (self.thresholds.mem_avail_warn_pct, self.thresholds.mem_avail_crit_pct), load_per_core: (self.thresholds.load_per_core_warn, self.thresholds.load_per_core_crit) };
-        View { limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" } }
+        View { templates: self.templates(loaded.inventory.tasks()), limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" }, scripts: self.scripts_view() }
     }
 
     pub fn audit(&self, host: Option<&str>, hours: u32, limit: usize) -> Vec<AuditRow> {
@@ -955,17 +978,29 @@ impl Fleet {
         let schedule = match draft.schedule.as_str() {
             "daily" => Some(TaskSchedule { daily: Some(draft.daily.clone()), ..Default::default() }),
             "every" => Some(TaskSchedule { every_minutes: Some(u64::from(draft.every_minutes)), ..Default::default() }),
+            "cron" => {
+                wisp_ops_engine::cron::parse(&draft.cron).map_err(|why| tf!("cron 表达式不能用：{}", "The cron expression cannot be used: {}", crate::cron::error(&why)))?;
+                Some(TaskSchedule { cron: Some(draft.cron.split_whitespace().collect::<Vec<_>>().join(" ")), ..Default::default() })
+            }
             _ => None,
         };
         if playbook == Playbook::Custom && draft.commands.is_empty() { return Err("自定义任务至少写一条只读命令。".into()) }
         if matches!(playbook, Playbook::Disk | Playbook::Space | Playbook::NewFiles) && draft.paths.is_empty() { return Err("这种检查需要填写路径。".into()) }
+        // A check script must be one a person accepted into the library, and still pass the checks.
+        let script = if playbook == Playbook::Script {
+            let script = self.library_script(&draft.script)?.ok_or("请选择检查脚本库里已接受的脚本。")?;
+            if let Some(reason) = wisp_ops_engine::check_scripts::script_refusal(&script.content, &self.extra_read, &self.deny) { return Err(format!("这个检查脚本现在不能运行：{reason}")) }
+            Some(script.id)
+        } else {
+            None
+        };
         for command in &draft.commands {
             let risk = risk::classify_command(command, &self.extra_read);
             if risk.level != RiskLevel::Read || risk.elevates { return Err(format!("这条命令不是只读的，任务里不能用：{command}{}", if risk.reasons.is_empty() { String::new() } else { format!("（{}）", risk.reasons.join("; ")) })) }
             if let Some(pattern) = self.deny.matches(command) { return Err(format!("这条命令被拒绝清单拦下（{pattern}）：{command}")) }
         }
         // A timed task of the window runs on its timer and the assistant reports when asked.
-        let spec = TaskSpec { name: draft.name.clone(), description: some(draft.description), targets: draft.targets, playbook, instruction: some(draft.instruction), schedule, paths: draft.paths, commands: draft.commands, sudo: draft.sudo.then_some(true), report: Some(config::ReportMode::Problems), ..Default::default() };
+        let spec = TaskSpec { name: draft.name.clone(), description: some(draft.description), targets: draft.targets, playbook, instruction: some(draft.instruction), schedule, paths: draft.paths, commands: draft.commands, sudo: draft.sudo.then_some(true), report: Some(config::ReportMode::Problems), script, days: draft.days, hours: draft.hours, template: draft.template, ..Default::default() };
         config::validate_task(&spec)?;
         let exists = self.inventory().task(&spec.name).is_some();
         let (name, timed) = (spec.name.clone(), spec.schedule.is_some());
@@ -974,7 +1009,8 @@ impl Fleet {
                 Some(old) => {
                     if old != spec.name { return Err("任务的标识关联着运行记录，不能修改。".into()) }
                     let slot = state.tasks.iter_mut().find(|task| task.name == old).ok_or("这个任务写在 inventory.yml 里，请在那里修改。")?;
-                    *slot = spec;
+                    // The form has no notification fields: what was written by hand stays.
+                    *slot = TaskSpec { notify: std::mem::take(&mut slot.notify), notify_only_problems: slot.notify_only_problems, notify_on_change: slot.notify_on_change, quiet_hours: slot.quiet_hours.take(), ..spec };
                 }
                 None => {
                     if exists { return Err(format!("已经有一个叫 {} 的任务。", spec.name)) }
@@ -1014,7 +1050,7 @@ impl Fleet {
         let now = time::now_ms();
         self.timer_state().tasks.iter().filter_map(|(name, entry)| {
             let task = inventory.task(name)?;
-            let schedule = task.schedule.as_ref().filter(|schedule| schedule.cron.is_none())?;
+            let schedule = task.schedule.as_ref()?;
             let last: Option<TaskRunRecord> = self.store.read_bounded("tasks", name).ok().and_then(|mut rows: Vec<TaskRunRecord>| rows.pop());
             schedule::due_now(schedule, &self.config.time_zone, last.as_ref().map(|record| record.at.as_str()), &entry.enabled_at, now).ok().filter(|due| *due).map(|_| name.clone())
         }).collect()
@@ -1121,8 +1157,9 @@ impl Fleet {
                 format!("No built-in collector: gather the evidence yourself with read-only ops_exec / ops_inspect calls on {}.", hosts.iter().map(|host| host.name.as_str()).collect::<Vec<_>>().join(", "))
             }
             Playbook::Script => {
-                bump("incomplete", 1.);
-                "Check scripts are not supported in this build; nothing ran.".to_string()
+                let (text, verdicts) = self.run_script_task(task, &hosts, &collect)?;
+                for (key, count) in verdicts { bump(key, count) }
+                text
             }
         };
         // The task's own read-only commands, checked when the task was saved, run after the collector.
@@ -1144,6 +1181,8 @@ impl Fleet {
         let previous: Option<TaskRunRecord> = self.store.read_bounded("tasks", &task.name).ok().and_then(|mut rows: Vec<TaskRunRecord>| rows.pop());
         let record = TaskRunRecord { at: time::to_iso(time::now_ms()), hosts: hosts.iter().map(|host| host.name.clone()).collect(), playbook: task.playbook.as_str().into(), counts, excerpt: body.chars().take(6000).collect() };
         let _ = self.store.append_bounded("tasks", &task.name, &record, 90);
+        // After the run is kept, as in the plugin; the sending never holds up or fails the task.
+        crate::notify::after_task(self, task, &record, previous.as_ref());
         Ok((task_text(task, &record, &body, previous.as_ref()), record))
     }
 
@@ -1187,6 +1226,9 @@ pub fn as_run(result: &RunResult) -> Run {
     Run { host: result.host.clone(), status: result.status.as_str().into(), exit_code: result.exit_code, stdout: result.stdout.clone(), stderr: result.stderr.clone(), truncated: result.truncated, duration_ms: result.duration_ms }
 }
 
+/// What the cron field of a task form starts with.
+pub const DEFAULT_CRON: &str = "30 8 * * 1-5";
+
 fn draft_of(task: &TaskSpec) -> TaskDraft {
     let schedule = task.schedule.as_ref();
     TaskDraft {
@@ -1197,10 +1239,15 @@ fn draft_of(task: &TaskSpec) -> TaskDraft {
         paths: task.paths.clone(),
         instruction: task.instruction.clone().unwrap_or_default(),
         commands: task.commands.clone(),
-        schedule: match schedule { Some(schedule) if schedule.daily.is_some() => "daily", Some(schedule) if schedule.every_minutes.is_some() => "every", _ => "manual" }.into(),
+        schedule: match schedule { Some(schedule) if schedule.daily.is_some() => "daily", Some(schedule) if schedule.every_minutes.is_some() => "every", Some(schedule) if schedule.cron.is_some() => "cron", _ => "manual" }.into(),
         daily: schedule.and_then(|schedule| schedule.daily.clone()).unwrap_or_else(|| "08:30".into()),
         every_minutes: schedule.and_then(|schedule| schedule.every_minutes).unwrap_or(60) as u32,
+        cron: schedule.and_then(|schedule| schedule.cron.clone()).unwrap_or_else(|| DEFAULT_CRON.into()),
         sudo: task.sudo == Some(true),
+        script: task.script.clone().unwrap_or_default(),
+        days: task.days,
+        hours: task.hours,
+        template: task.template.clone(),
     }
 }
 
@@ -1211,7 +1258,10 @@ fn describe_when(schedule: Option<&TaskSchedule>) -> String {
         Some(schedule) => match (&schedule.daily, &schedule.cron, schedule.every_minutes) {
             (Some(daily), ..) if schedule.weekdays.is_empty() => tf!("每天 {daily}", "Daily at {daily}"),
             (Some(daily), ..) => tf!("每周 {} 的 {daily}", "Weekdays {} at {daily}", schedule.weekdays.iter().map(u32::to_string).collect::<Vec<_>>().join(",")),
-            (_, Some(cron), _) => tf!("cron {cron}（定时器不支持，仅手动）", "cron {cron} (not kept by the timer; manual only)"),
+            (_, Some(cron), _) => match wisp_ops_engine::cron::parse(cron) {
+                Ok(parsed) => format!("{} · cron {cron}", crate::cron::describe(&parsed)),
+                Err(why) => tf!("cron {cron}（不能用：{}）", "cron {cron} (cannot be used: {})", crate::cron::error(&why)),
+            },
             (_, _, Some(minutes)) => tf!("每 {minutes} 分钟", "Every {minutes} min"),
             _ => crate::i18n::t("仅手动").to_string(),
         },
@@ -1275,6 +1325,22 @@ mod tests {
         std::fs::remove_dir(root.join("managed.json.lock")).unwrap();
         assert!(names(&fleet).is_empty());
         assert_eq!(fleet.inventory().host("cpu").and_then(|host| host.login_secret.clone()), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_cron_task_is_saved_kept_by_the_timer_and_an_unusable_expression_is_refused() {
+        let (fleet, root) = fleet("cron");
+        let draft = |expression: &str| super::TaskDraft { name: "weekday".into(), targets: "all".into(), playbook: "inspect".into(), schedule: "cron".into(), cron: expression.into(), ..Default::default() };
+        let refused = fleet.save_task(None, draft("0 8 31 2 *")).unwrap_err();
+        assert!(refused.contains("cron"), "{refused}");
+        assert!(fleet.inventory().task("weekday").is_none());
+        fleet.save_task(None, draft("  30 8   * * 1-5 ")).unwrap();
+        assert_eq!(fleet.inventory().task("weekday").and_then(|task| task.schedule.clone()).and_then(|schedule| schedule.cron).as_deref(), Some("30 8 * * 1-5"));
+        let view = fleet.view();
+        let task = view.tasks.iter().find(|task| task.name == "weekday").unwrap();
+        assert!(task.scheduled && task.enabled && task.next.is_some());
+        assert_eq!((task.draft.schedule.as_str(), task.draft.cron.as_str()), ("cron", "30 8 * * 1-5"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

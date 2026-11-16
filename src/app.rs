@@ -179,6 +179,18 @@ pub enum Cmd {
     PickPlaybook(&'static str),
     PickSchedule(&'static str),
     ToggleTaskSudo,
+    /// The check-script library and its drafts (`scripts.rs`).
+    Scripts(crate::scripts::ScriptCmd),
+    // ---- task templates
+    OpenTemplates,
+    /// Start a new task from this template.
+    UseTemplate(String),
+    /// Keep this task as a template.
+    SaveAsTemplate(String),
+    ReviewDraft(String),
+    DiscardDraft(String),
+    AskDeleteTemplate(String),
+    DeleteTemplate(String),
     // ---- audit
     AuditHost(Option<String>),
     AuditRange(u32),
@@ -200,6 +212,29 @@ pub enum Cmd {
     ToggleSkill(String),
     RevealData,
     OpenUrl(String),
+    // ---- updates
+    CheckUpdate,
+    ToggleUpdateCheck,
+    DownloadUpdate,
+    /// Show the downloaded package in the file manager.
+    RevealUpdate(PathBuf),
+    /// Put away the notice beside the pages for the version it names.
+    DismissUpdate,
+    /// From the notice: 设置 › 通用, where the update is.
+    ShowUpdate,
+    // ---- settings: outgoing webhooks (`webhooks.rs`)
+    AddWebhook,
+    EditWebhook(usize),
+    RemoveWebhook(usize),
+    /// Remove, once confirmed.
+    DropWebhook(usize),
+    /// Send a test: a saved webhook, or the dialog's fields (`None`).
+    TestWebhook(Option<usize>),
+    PickWebhookKind(&'static str),
+    ToggleWebhookEvent(&'static str),
+    SetWebhookTasks(&'static str),
+    /// 设置 → WebDAV 设备同步.
+    Sync(crate::sync::SyncCmd),
     // ---- dialogs and menus
     SubmitModal,
     CloseModal,
@@ -250,6 +285,8 @@ pub struct Workspace {
     pub chat: Chat,
     pub skills: Vec<wisp_ops_core::skill::Skill>,
     pub settings_view: crate::settings::SettingsView,
+    /// 设置 → WebDAV 设备同步: its fields and the sync running.
+    pub sync: crate::sync::SyncPage,
     // ---- servers
     pub selected_host: Option<String>,
     pub host_search: Entity<TextInput>,
@@ -278,6 +315,7 @@ pub struct Workspace {
     pub audit_hours: u32,
     // ---- tasks: the tasks running from the window right now.
     pub running_tasks: HashSet<String>,
+    pub scripts: crate::scripts::ScriptsState,
     pub modal: Option<Modal>,
     pub modal_error: String,
     pub modal_busy: bool,
@@ -289,6 +327,8 @@ pub struct Workspace {
     pub resizing: Option<Edge>,
     pub page_scroll: ScrollHandle,
     pub detail_scroll: ScrollHandle,
+    /// What the last update check found, and whether one or a download is under way.
+    pub updates: crate::updates_view::UpdateState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -304,6 +344,7 @@ impl Workspace {
         wisp_ops_net::set_proxy(&settings.proxy);
         let root = settings.data_root(&default_root());
         let fleet = Arc::new(Fleet::open(&root));
+        crate::notify::configure(&settings, Some(fleet.data_dir()));
         let focus = cx.focus_handle();
         window.focus(&focus);
         theme::set_accent("teal");
@@ -318,7 +359,8 @@ impl Workspace {
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), _subscriptions: subscriptions };
+        let sync = crate::sync::SyncPage::new(&fleet, cx);
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -331,6 +373,7 @@ impl Workspace {
     /// Once the window is there: the timers that keep the fleet looked after while it is open.
     pub fn start(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.watch_fleet(cx);
+        self.start_updates(cx);
     }
 
     pub fn on(&self, cmd: Cmd, cx: &mut Context<Self>) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -594,6 +637,7 @@ impl Workspace {
             }
             Cmd::RevealData => cx.open_with_system(self.fleet.data_dir()),
             Cmd::OpenUrl(url) => cx.open_url(&url),
+            Cmd::Sync(cmd) => self.run_sync(cmd, window, cx),
             Cmd::SubmitModal => self.submit_modal(window, cx),
             Cmd::CloseModal => self.close_modal(window, cx),
             Cmd::Confirmed(cmd) => {
@@ -616,6 +660,8 @@ impl Workspace {
             }
             cmd @ (Cmd::AddCredential | Cmd::EditCredential(_) | Cmd::DeleteCredential(_) | Cmd::ToggleAgentUse) => self.run_vault(cmd, window, cx),
             cmd @ (Cmd::AddTask | Cmd::EditTask(_) | Cmd::DeleteTask(_) | Cmd::RunTask(_) | Cmd::ToggleTask(_) | Cmd::PickPlaybook(_) | Cmd::PickSchedule(_) | Cmd::ToggleTaskSudo) => self.run_tasks(cmd, window, cx),
+            Cmd::Scripts(cmd) => self.run_scripts(cmd, window, cx),
+            cmd @ (Cmd::OpenTemplates | Cmd::UseTemplate(_) | Cmd::SaveAsTemplate(_) | Cmd::ReviewDraft(_) | Cmd::DiscardDraft(_) | Cmd::AskDeleteTemplate(_) | Cmd::DeleteTemplate(_)) => self.run_templates(cmd, window, cx),
             Cmd::AuditHost(host) => {
                 self.audit_host = host;
                 self.page = Page::Audit;
@@ -625,6 +671,8 @@ impl Workspace {
                 self.audit_hours = hours;
                 self.reload_audit(cx);
             }
+            cmd @ (Cmd::CheckUpdate | Cmd::ToggleUpdateCheck | Cmd::DownloadUpdate | Cmd::RevealUpdate(_) | Cmd::DismissUpdate | Cmd::ShowUpdate) => self.run_updates(cmd, cx),
+            cmd @ (Cmd::AddWebhook | Cmd::EditWebhook(_) | Cmd::RemoveWebhook(_) | Cmd::DropWebhook(_) | Cmd::TestWebhook(_) | Cmd::PickWebhookKind(_) | Cmd::ToggleWebhookEvent(_) | Cmd::SetWebhookTasks(_)) => self.run_webhooks(cmd, cx),
             cmd => self.run_settings(cmd, window, cx),
         }
         cx.notify();
@@ -875,6 +923,7 @@ impl Workspace {
                     .child(div().h(px(10.)))
                     .child(row(Page::Assistant, None, self, cx))
                     .child(div().flex_1())
+                    .children(self.render_update_notice(cx))
                     .child(div().h(px(1.)).mx(px(6.)).my(px(6.)).bg(Theme::line()))
                     .child(row(Page::Vault, None, self, cx))
                     .child(row(Page::Settings, None, self, cx)),
@@ -1020,7 +1069,27 @@ impl Workspace {
             "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
             "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
+            "schedule" => self.run(Cmd::PickSchedule(match arg { "cron" => "cron", "every" => "every", "manual" => "manual", _ => "daily" }), window, cx),
+            "cron" => {
+                if let Some(Modal::Task(form)) = self.modal.as_ref() { form.cron.clone().update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)) }
+            }
+            // The 检查脚本 tab of 例行任务, a script or draft laid open (`script-open:draft:<id>`), a script as a new task.
+            "scripts" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::Tab(arg != "off")), window, cx),
+            "script-open" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::Open(arg.to_string())), window, cx),
+            "use-script" => self.run(Cmd::Scripts(crate::scripts::ScriptCmd::UseInTask(arg.to_string())), window, cx),
+            // The template library, a new task from a template, a task kept as one, the nth draft under review: `templates`, `use-template:builtin.services`, `save-template:<task>`, `review-draft:0`.
+            "templates" => self.run(Cmd::OpenTemplates, window, cx),
+            "use-template" => self.run(Cmd::UseTemplate(arg.to_string()), window, cx),
+            "save-template" => self.run(Cmd::SaveAsTemplate(arg.to_string()), window, cx),
+            "review-draft" => {
+                let id = self.view.templates.drafts.get(arg.parse::<usize>().unwrap_or(0)).map(|draft| draft.id.clone()).unwrap_or_default();
+                self.run(Cmd::ReviewDraft(id), window, cx);
+            }
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
+            // The webhook dialog: `add-webhook`, `edit-webhook:0`; `test-webhook` tests the dialog's fields, `test-webhook:0` a saved one.
+            "add-webhook" => self.run(Cmd::AddWebhook, window, cx),
+            "edit-webhook" => self.run(Cmd::EditWebhook(arg.parse().unwrap_or(0)), window, cx),
+            "test-webhook" => self.run(Cmd::TestWebhook(arg.parse().ok()), window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),
             // The credential dialog of a server: `bind:web-01` for its login, `bind-sudo:web-01`; `bind-new` writes a new one.
             "bind" | "bind-sudo" => self.run(Cmd::BindCredential(arg.to_string(), name == "bind-sudo"), window, cx),
@@ -1030,6 +1099,8 @@ impl Workspace {
             "history" => self.run(Cmd::ToggleHistory, window, cx),
             "find-chat" => self.chat.search.update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)),
             "open-chat" => self.run(Cmd::OpenChat(arg.to_string()), window, cx),
+            // Device sync: `sync:fill=<url>|<user>|<password>|<passphrase>`, `sync:push`, `sync:list`, `sync:preview` (the newest), `sync:pull`, `sync:scroll`.
+            "sync" => self.dev_sync(arg, window, cx),
             "tab" => self.run(Cmd::SetSettingsTab(match arg { "general" => crate::settings::Tab::General, "skills" => crate::settings::Tab::Skills, _ => crate::settings::Tab::Models }), window, cx),
             "shot" => {
                 let path = PathBuf::from(arg);

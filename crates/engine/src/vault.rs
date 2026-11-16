@@ -251,6 +251,23 @@ fn open(key: &[u8; 32], name: &str, secret: &str) -> Result<String, String> {
     String::from_utf8(plain).map_err(|_| failed())
 }
 
+/// A credential as a sync snapshot carries it: the entry with its password in clear, inside the
+/// encrypted envelope only. Field order and names are the plugin's.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortableCredential {
+    pub name: String,
+    pub username: String,
+    pub note: String,
+    pub agent: bool,
+    pub password: String,
+}
+
+impl std::fmt::Debug for PortableCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PortableCredential").field("name", &self.name).field("username", &self.username).field("agent", &self.agent).field("password", &"[REDACTED]").finish()
+    }
+}
+
 /// A commit of associated state that takes part in a vault write: when it fails, the vault file is restored.
 pub type Participant<'a> = &'a mut dyn FnMut() -> Result<(), String>;
 
@@ -351,6 +368,55 @@ impl LocalVault {
         let password = open(&key, name, &entry.secret);
         key.fill(0);
         Ok(Some(SudoCredential { password: password?, username: entry.username.clone() }))
+    }
+
+    /// Every entry with its password, for an encrypted sync snapshot only.
+    pub fn export_for_sync(&self) -> Result<(String, Vec<PortableCredential>), String> {
+        let read = self.state.read()?;
+        if read.value.entries.is_empty() { return Ok((read.revision, vec![])) }
+        let mut key = self.key_provider.key(&self.dir, false)?;
+        let entries: Result<Vec<PortableCredential>, String> = read.value.entries.iter().map(|entry| open(&key, &entry.name, &entry.secret).map(|password| PortableCredential { name: entry.name.clone(), username: entry.username.clone(), note: entry.note.clone(), agent: entry.agent, password })).collect();
+        key.fill(0);
+        Ok((read.revision, entries?))
+    }
+
+    /// Replace the whole vault with the entries of a sync snapshot, sealed under this device's key,
+    /// if it still has `revision`. `participate` commits as in [`LocalState::change_with`].
+    pub fn replace_from_sync(&self, entries: &[PortableCredential], revision: &str, participate: impl FnOnce(&mut dyn FnMut() -> Result<(), String>) -> Result<(), String>) -> Result<(), String> {
+        let mut names = std::collections::HashSet::new();
+        for entry in entries {
+            if entry.name.is_empty() || entry.name.encode_utf16().count() > 100 || !names.insert(entry.name.as_str()) || entry.name.contains(['\r', '\n', '\0']) || entry.password.is_empty() || entry.password.encode_utf16().count() > 16384 || entry.password.contains(['\r', '\n', '\0']) {
+                return Err("Invalid sync credential".to_string());
+            }
+        }
+        let update = |old: VaultFile| -> Result<VaultFile, String> {
+            if entries.is_empty() { return Ok(VaultFile { version: 1, entries: vec![] }) }
+            let mut key = self.key_provider.key(&self.dir, old.entries.is_empty())?;
+            let sealed: Result<Vec<SealedCredential>, String> = entries.iter().map(|entry| seal(&key, &entry.name, &entry.password).map(|secret| SealedCredential { name: entry.name.clone(), username: entry.username.clone(), note: entry.note.clone(), agent: entry.agent, secret })).collect();
+            key.fill(0);
+            Ok(VaultFile { version: 1, entries: sealed? })
+        };
+        self.state.change_with(revision, update, participate)?;
+        let _ = set_mode(self.state.path(), 0o600);
+        Ok(())
+    }
+
+    /// Seal a secret of this data folder that is not a vault entry (the sync settings' passwords)
+    /// under the vault's key. `label` is the associated data; it starts with NUL, which no entry name has.
+    pub fn seal_aside(&self, label: &str, plain: &str) -> Result<String, String> {
+        let create = self.state.read()?.value.entries.is_empty();
+        let mut key = self.key_provider.key(&self.dir, create)?;
+        let sealed = seal(&key, label, plain);
+        key.fill(0);
+        sealed
+    }
+
+    /// Open what [`LocalVault::seal_aside`] sealed.
+    pub fn open_aside(&self, label: &str, sealed: &str) -> Result<String, String> {
+        let mut key = self.key_provider.key(&self.dir, false)?;
+        let plain = open(&key, label, sealed);
+        key.fill(0);
+        plain
     }
 
     /// The password behind a reference; see [`LocalVault::credential`].

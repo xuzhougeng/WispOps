@@ -49,7 +49,8 @@ fn finds_the_latest_daily_and_weekly_slot_at_or_before_now() {
     // Weekly on Mondays and Fridays: the Monday slot was the last one.
     assert_eq!(due(&TaskSchedule { weekdays: vec![1, 5], ..daily("08:30") }, "Asia/Shanghai"), Some(at("2026-10-26T00:30:00Z")));
     assert_eq!(due(&TaskSchedule { weekdays: vec![2], ..daily("10:00") }, "Asia/Shanghai"), Some(at("2026-10-20T02:00:00Z")));
-    assert_eq!(due(&cron(), "UTC"), None);
+    assert_eq!(due(&cron(), "UTC"), Some(at("2026-10-26T08:00:00Z")));
+    assert_eq!(due(&cron(), "Asia/Shanghai"), Some(at("2026-10-27T00:00:00Z")));
     assert_eq!(due(&every(30), "UTC"), None);
     assert!(previous_due(&daily("08:30"), "Not/AZone", now).is_err());
 }
@@ -68,7 +69,10 @@ fn reports_a_missed_slot_only_after_the_grace_period_and_when_no_run_covered_it(
     assert!(!missed(&every(15), None, due).missed);
     assert!(!missed(&every(15), Some(due), due + minutes(20)).missed);
     assert_eq!(missed(&every(15), Some(due), due + minutes(50)), MissedRun { due_at: Some(to_iso(due + minutes(15))), missed: true });
-    assert_eq!(missed(&cron(), None, due + 86_400_000), MissedRun { due_at: None, missed: false });
+    // Cron examines its latest slot at least the grace period old: 08:00Z, nine hours before.
+    assert_eq!(missed(&cron(), None, at("2026-10-27T17:00:00Z")), MissedRun { due_at: Some("2026-10-27T08:00:00.000Z".to_string()), missed: true });
+    assert!(!missed(&cron(), Some(at("2026-10-27T08:00:20Z")), at("2026-10-27T17:00:00Z")).missed);
+    assert!(!missed(&cron(), Some(at("2026-10-26T08:00:20Z")), at("2026-10-27T08:20:00Z")).missed);
 }
 
 #[test]
@@ -99,7 +103,7 @@ fn runs_daily_slots_once_and_only_after_the_timer_was_enabled() {
 }
 
 #[test]
-fn counts_intervals_from_the_later_of_the_last_run_and_enabling_and_never_runs_cron() {
+fn counts_intervals_from_the_later_of_the_last_run_and_enabling() {
     let t0 = at("2026-10-27T00:00:00Z");
     let minutes = |n: i64| n * 60_000;
     let schedule = every(30);
@@ -113,8 +117,41 @@ fn counts_intervals_from_the_later_of_the_last_run_and_enabling_and_never_runs_c
     assert_eq!(next_due(&schedule, "UTC", None, &to_iso(t0), t0 + minutes(40)).unwrap(), Some(t0 + minutes(40)));
     // An unreadable enabling time counts from now; an unreadable last run is no run.
     assert!(!due_now(&schedule, "UTC", Some("garbage"), "garbage", t0).unwrap());
-    assert!(!due_now(&cron(), "UTC", None, &to_iso(t0), t0 + 86_400_000 * 3).unwrap());
-    assert_eq!(next_due(&cron(), "UTC", None, &to_iso(t0), t0).unwrap(), None);
+}
+
+#[test]
+fn runs_cron_slots_once_from_enabling_in_the_task_zone() {
+    let t0 = at("2026-10-27T00:00:00Z");
+    let minutes = |n: i64| n * 60_000;
+    let slot = at("2026-10-27T08:00:00Z");
+    let due = |schedule: &TaskSchedule, last: Option<i64>, enabled: i64, now: i64| due_now(schedule, "UTC", last.map(to_iso).as_deref(), &to_iso(enabled), now).unwrap();
+    let next = |schedule: &TaskSchedule, last: Option<i64>, enabled: i64, now: i64| next_due(schedule, "UTC", last.map(to_iso).as_deref(), &to_iso(enabled), now).unwrap();
+    assert!(!due(&cron(), None, t0, slot - 1000));
+    assert!(due(&cron(), None, t0, slot));
+    assert!(due(&cron(), None, t0, t0 + 86_400_000 * 3));
+    assert!(!due(&cron(), Some(slot + 1000), t0, slot + minutes(30)));
+    assert!(!due(&cron(), Some(slot - minutes(3)), t0, slot + minutes(1)));
+    // Enabling after today's slot waits for tomorrow's.
+    assert!(!due(&cron(), None, slot + 1000, slot + minutes(30)));
+    assert_eq!(next(&cron(), None, t0, t0), Some(slot));
+    assert_eq!(next(&cron(), None, t0, slot + 5000), Some(slot + 5000));
+    assert_eq!(next(&cron(), Some(slot + 1000), t0, slot + 5000), Some(slot + 86_400_000));
+    // In the task's own zone: 08:00 in Shanghai.
+    let shanghai = TaskSchedule { time_zone: Some("Asia/Shanghai".to_string()), ..cron() };
+    assert_eq!(next(&shanghai, None, t0 - 1000, t0 + 1000), Some(t0 + 1000));
+    assert_eq!(next(&shanghai, None, t0 + 1000, t0 + 2000), Some(at("2026-10-28T00:00:00Z")));
+    // Every minute: the run of the previous slot does not cover this one.
+    let often = TaskSchedule { cron: Some("* * * * *".to_string()), ..TaskSchedule::default() };
+    assert!(due(&often, Some(t0 + 2000), t0, t0 + minutes(1)));
+    assert!(!due(&often, Some(t0 + minutes(1) + 2000), t0, t0 + minutes(1) + 30_000));
+    assert!(!due(&often, Some(t0 + minutes(1) - 10_000), t0, t0 + minutes(1) + 30_000));
+    assert_eq!(next(&often, Some(t0 + minutes(1) + 2000), t0, t0 + minutes(1) + 30_000), Some(t0 + minutes(2)));
+    // A schedule that runs more often than the grace period still reports a miss.
+    assert!(missed_run(&often, "UTC", Some(&to_iso(t0)), t0 + minutes(45)).unwrap().missed);
+    assert!(!missed_run(&often, "UTC", Some(&to_iso(t0 + minutes(44))), t0 + minutes(45)).unwrap().missed);
+    // An expression that cannot be evaluated is an error, not a silent never.
+    let broken = TaskSchedule { cron: Some("0 8 31 2 *".to_string()), ..TaskSchedule::default() };
+    assert!(due_now(&broken, "UTC", None, &to_iso(t0), t0).unwrap_err().contains("never matches"));
 }
 
 #[test]

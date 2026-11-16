@@ -77,13 +77,20 @@ pub struct TaskForm {
     pub paths: Entity<TextInput>,
     pub instruction: Entity<TextInput>,
     pub commands: Entity<TextInput>,
-    /// `manual`, `daily` or `every`.
+    /// `manual`, `daily`, `every` or `cron`.
     pub schedule: &'static str,
     pub daily: Entity<TextInput>,
     pub every: Entity<TextInput>,
+    pub cron: Entity<TextInput>,
     pub sudo: bool,
+    /// The check script of the `script` playbook.
+    pub script: String,
+    /// What the form keeps unseen, and the template a new task starts from.
+    pub origin: crate::templates::TaskOrigin,
 }
 
+// One dialog is open at a time: the task form's size is not worth a box at every use of it.
+#[allow(clippy::large_enum_variant)]
 pub enum Modal {
     Confirm { title: String, message: String, label: String, danger: bool, cmd: Cmd },
     /// Something to read: what a tool returned, an inspection's findings.
@@ -94,6 +101,10 @@ pub enum Modal {
     Bind(BindForm),
     Import(ImportForm),
     Task(TaskForm),
+    Webhook(crate::webhooks::WebhookForm),
+    /// The task template library, to start a task from.
+    Templates,
+    Template(crate::templates::TemplateForm),
 }
 
 impl Modal {
@@ -104,9 +115,11 @@ impl Modal {
         match self {
             Modal::Host(HostForm { editing: _, name, address, user, port, groups, jump, identity, description }) => vec![name, groups, address, user, port, jump, identity, description],
             Modal::Credential(form) | Modal::Bind(BindForm { new: Some(form), .. }) => form.inputs(),
-            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, sudo: _ }) => vec![name, description, targets, paths, commands, instruction, daily, every],
+            Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, every, cron, sudo: _, script: _, origin }) => [vec![name, description, targets], origin.inputs(), vec![paths, commands, instruction, daily, every, cron]].concat(),
+            Modal::Template(form) => form.inputs(),
             Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _, new: None }) | Modal::Import(ImportForm { rows: _ }) => vec![],
-            Modal::Confirm { .. } | Modal::Text { .. } => vec![],
+            Modal::Confirm { .. } | Modal::Text { .. } | Modal::Templates => vec![],
+            Modal::Webhook(form) => form.inputs(),
         }
     }
 }
@@ -173,9 +186,13 @@ impl Workspace {
                 return;
             }
             Modal::Text { .. } => Ok(()),
+            // Its button opens a blank task form in its place.
+            Modal::Templates => return self.run(Cmd::AddTask, window, cx),
+            Modal::Template(_) => self.submit_template(window, cx),
             Modal::Host(_) | Modal::Policy(_) | Modal::Bind(_) | Modal::Import(_) => self.submit_servers(window, cx),
             Modal::Credential(_) => self.submit_vault(window, cx),
             Modal::Task(_) => self.submit_task(window, cx),
+            Modal::Webhook(_) => self.submit_webhook(cx),
         };
         match done {
             Ok(()) => self.close_modal(window, cx),
@@ -371,6 +388,9 @@ impl Workspace {
                 false,
             ),
             Modal::Task(form) => self.task_form_body(form, window, cx),
+            Modal::Webhook(form) => self.webhook_form_body(form, window, cx),
+            Modal::Templates => self.template_library_body(cx),
+            Modal::Template(form) => self.template_form_body(form, window, cx),
         };
         let reading = label.is_none();
         // An import with nothing ticked has nothing to do: the button says so before it is pressed.

@@ -209,7 +209,7 @@ impl Workspace {
     }
 
     /// A titled block of the page.
-    fn section(title: &str, about: &str) -> Div {
+    pub fn section(title: &str, about: &str) -> Div {
         div().flex().flex_col().gap(px(10.)).child(div().flex().flex_col().child(div().font_weight(FontWeight::MEDIUM).child(title.to_string())).when(!about.is_empty(), |d| d.child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(about.to_string()))))
     }
 
@@ -317,11 +317,14 @@ impl Workspace {
                 Self::section(t("自动巡检"), t("窗口开着时，每台服务器距上次巡检超过这个间隔就以只读方式、不使用 sudo 巡检一次并写入历史；机群总览据此显示状态和趋势。不调用模型。"))
                     .child(row(t("间隔"), ui::secondary_button("auto-inspect", interval_label(settings.auto_inspect_minutes)).child(ui::icon("chevron-down", 12., Theme::text_tertiary())).on_click(self.on_menu(MenuKind::AutoInspect, cx)).into_any_element())),
             )
-            .child(Self::section(t("网络"), t("模型请求走的代理。SSH 连接不受它影响，仍按 ~/.ssh/config。")).child(row(t("全局代理"), div().w(px(420.)).child(ui::field(&self.settings_view.proxy, window, cx)).into_any_element())))
+            .child(self.render_webhooks(cx))
+            .child(Self::section(t("网络"), t("模型请求、更新检查、外部通知和设备同步走的代理（发往本机的请求不走）。SSH 连接不受它影响，仍按 ~/.ssh/config。")).child(row(t("全局代理"), div().w(px(420.)).child(ui::field(&self.settings_view.proxy, window, cx)).into_any_element())))
+            .child(self.render_sync(window, cx))
             .child(
                 Self::section(t("数据"), t("清单、密码库、操作审计、巡检历史和对话都在这个文件夹里。清单文件 inventory.yml 可以手写，保存后下一次操作即生效。"))
                     .child(div().flex().items_center().gap(px(10.)).child(div().flex_1().min_w_0().truncate().font_family(theme::MONO_FONT).text_size(text_px(12.)).text_color(Theme::text_secondary()).child(self.fleet.data_dir().display().to_string())).child(ui::secondary_button("reveal-data", t("打开文件夹")).h(text_px(28.)).on_click(self.on(Cmd::RevealData, cx)))),
             )
+            .child(self.render_update_section(cx))
             .child(div().text_size(text_px(12.)).text_color(Theme::text_placeholder()).child(format!("WispOps {}", env!("CARGO_PKG_VERSION"))))
             .into_any_element()
     }
