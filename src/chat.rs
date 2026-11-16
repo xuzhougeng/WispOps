@@ -90,6 +90,12 @@ pub struct Chat {
     slash_closed: bool,
     /// The past conversations, while their list is on show.
     pub history: Option<Vec<ChatInfo>>,
+    /// The kept conversations as the assistant's page lists them: read when the page is entered and after each change.
+    pub conversations: Vec<ChatInfo>,
+    /// What the page's list is filtered by.
+    pub search: Entity<TextInput>,
+    /// The page the assistant's page was entered from: where its shortcut goes back to.
+    pub back: Page,
     /// The tool calls waiting for the person's consent.
     pub pending: Option<PendingTools>,
     /// The calls running now, which get an answer of their own if the person stops.
@@ -113,7 +119,8 @@ impl Chat {
             input.submit_on_enter = true;
             input
         });
-        Chat { input, messages: vec![], wire: vec![], protocol: None, steps: 0, ctx: None, busy: false, error: String::new(), note: String::new(), scroll: ScrollHandle::new(), generation: 0, id: String::new(), created_at: String::new(), session: new_session(), slash: 0, slash_closed: false, history: None, pending: None, running: vec![], cancel: Arc::new(AtomicBool::new(false)), tools_open: Default::default(), started: None }
+        let search = cx.new(|cx| TextInput::new("搜索对话", cx));
+        Chat { input, messages: vec![], wire: vec![], protocol: None, steps: 0, ctx: None, busy: false, error: String::new(), note: String::new(), scroll: ScrollHandle::new(), generation: 0, id: String::new(), created_at: String::new(), session: new_session(), slash: 0, slash_closed: false, history: None, conversations: vec![], search, back: Page::Overview, pending: None, running: vec![], cancel: Arc::new(AtomicBool::new(false)), tools_open: Default::default(), started: None }
     }
 
     /// The slash commands to offer for what is in the box right now.
@@ -157,7 +164,7 @@ fn conversations_dir(fleet: &crate::ops::Fleet) -> std::path::PathBuf {
     fleet.data_dir().join("conversations")
 }
 
-fn list_conversations(fleet: &crate::ops::Fleet) -> Vec<ChatInfo> {
+pub fn list_conversations(fleet: &crate::ops::Fleet) -> Vec<ChatInfo> {
     let mut all: Vec<ChatInfo> = std::fs::read_dir(conversations_dir(fleet))
         .into_iter()
         .flatten()
@@ -580,6 +587,13 @@ impl Workspace {
         let dir = conversations_dir(&self.fleet);
         let result = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join(format!("{}.json", chat.id)), serde_json::to_string(&chat.transcript()).unwrap_or_default()));
         if let Err(err) = result { self.fail(tf!("这次对话没能保存：{err}", "Conversation not saved: {err}"), cx) }
+        self.relist();
+    }
+
+    /// Read the kept conversations again for whichever list is on show: the page's, the panel's.
+    pub fn relist(&mut self) {
+        if self.page == Page::Assistant { self.chat.conversations = list_conversations(&self.fleet) }
+        if self.chat.history.is_some() { self.chat.history = Some(list_conversations(&self.fleet)) }
     }
 
     pub fn toggle_history(&mut self, cx: &mut Context<Self>) {
@@ -609,13 +623,17 @@ impl Workspace {
             })
             .collect();
         chat.scroll.scroll_to_bottom();
+        self.relist();
         cx.notify();
     }
 
     pub fn delete_chat(&mut self, id: &str, cx: &mut Context<Self>) {
         let _ = std::fs::remove_file(conversations_dir(&self.fleet).join(format!("{id}.json")));
+        // The panel's list stays open: deleting the open conversation starts a new one, which closes it.
+        let listing = self.chat.history.is_some();
         if self.chat.id == id { self.new_chat(cx) }
-        self.chat.history = Some(list_conversations(&self.fleet));
+        if listing { self.chat.history = Some(vec![]) }
+        self.relist();
         cx.notify();
     }
 
@@ -628,30 +646,25 @@ impl Workspace {
 
     // ---- drawing
 
-    pub fn render_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let chat = &self.chat;
-        let profile = self.settings.chat_profile();
-        let configured = profile.as_ref().is_some_and(|profile| !profile.key().is_empty());
-        let model = profile.map(|profile| profile.title()).unwrap_or_default();
-        let listing = chat.history.is_some();
-        let grants = self.fleet.grants(&chat.session);
-        let full = self.fleet.grant_store().is_full(&chat.session);
-        let scope = if listing {
-            t("点开一次对话可以接着说").to_string()
-        } else if self.view.hosts.is_empty() {
+    /// What the assistant may work on, said under its title.
+    pub fn chat_scope(&self) -> String {
+        if self.view.hosts.is_empty() {
             t("清单里还没有服务器").to_string()
         } else {
             tf!("可操作清单里的 {} 台服务器；变更、sudo 和破坏性操作按每台的权限裁决", "Works on the {} servers of the inventory; changes, sudo and destructive commands are settled per host", self.view.hosts.len())
+        }
+    }
+
+    /// The panel beside a page: its header, and the conversation or the list of past ones.
+    pub fn render_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let chat = &self.chat;
+        let listing = chat.history.is_some();
+        let scope = if listing { t("点开一次对话可以接着说").to_string() } else { self.chat_scope() };
+        let body = match &chat.history {
+            Some(history) => self.render_history(history, cx),
+            None => self.render_conversation(None, window, cx).into_any_element(),
         };
-        let body = if let Some(history) = &chat.history {
-            self.render_history(history, cx)
-        } else if !configured && chat.messages.is_empty() {
-            ui::empty_state("sparkle", t("还没有配置模型"), t("助手需要一个模型服务：Claude API，或任何 OpenAI 兼容的服务。API Key 只保存在本机。不配置模型也可以用左边的页面巡检和管理服务器。")).child(ui::primary_button("chat-settings", t("打开设置")).on_click(self.on(Cmd::SetPage(Page::Settings), cx))).into_any_element()
-        } else if chat.messages.is_empty() && chat.error.is_empty() {
-            self.render_start(cx)
-        } else {
-            div().id("chat").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(&chat.scroll).px(px(16.)).py(px(14.)).gap(px(14.)).children(self.render_messages(cx)).into_any_element()
-        };
+        let chat = &self.chat;
         div()
             .flex()
             .flex_col()
@@ -669,10 +682,45 @@ impl Workspace {
                     )
                     .child(ui::ghost_button("chat-history", Some(if listing { "arrow-left" } else { "history" }), None).tooltip(ui::tip(if listing { t("返回对话") } else { t("历史对话") })).on_click(self.on(Cmd::ToggleHistory, cx)))
                     .when(!chat.messages.is_empty() && !listing, |d| d.child(ui::ghost_button("chat-new", Some("plus"), None).tooltip(ui::tip(t("新对话"))).on_click(self.on(Cmd::NewChat, cx))))
+                    .child(ui::ghost_button("chat-page", Some("expand"), None).tooltip(ui::tip(t("在页面中打开"))).on_click(self.on(Cmd::SetPage(Page::Assistant), cx)))
                     .child(ui::ghost_button("chat-hide", Some("panel-left"), None).tooltip(ui::tip(t("收起助手"))).on_click(self.on(Cmd::ToggleChat, cx))),
             )
+            .child(body)
+            .into_any_element()
+    }
+
+    /// The conversation itself: the grants strip, the messages (or the start), the consent card and the composer.
+    /// Drawn once a frame, in the panel or on the assistant's page; there `column` is the width its text is kept to.
+    pub fn render_conversation(&self, column: Option<f32>, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let chat = &self.chat;
+        let profile = self.settings.chat_profile();
+        let configured = profile.as_ref().is_some_and(|profile| !profile.key().is_empty());
+        let model = profile.map(|profile| profile.title()).unwrap_or_default();
+        let grants = self.fleet.grants(&chat.session);
+        let full = self.fleet.grant_store().is_full(&chat.session);
+        let body = if !configured && chat.messages.is_empty() {
+            ui::empty_state("sparkle", t("还没有配置模型"), t("助手需要一个模型服务：Claude API，或任何 OpenAI 兼容的服务。API Key 只保存在本机。不配置模型也可以用左边的页面巡检和管理服务器。")).child(ui::primary_button("chat-settings", t("打开设置")).on_click(self.on(Cmd::SetPage(Page::Settings), cx))).into_any_element()
+        } else if chat.messages.is_empty() && chat.error.is_empty() {
+            self.render_start(cx)
+        } else {
+            let messages = div().id("chat").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(&chat.scroll).px(px(16.));
+            match column {
+                None => messages.py(px(14.)).gap(px(14.)).children(self.render_messages(cx)).into_any_element(),
+                // The scroll runs the full width, so the wheel works beside the text too; the text keeps to its column.
+                Some(width) => messages.items_center().py(px(20.)).child(div().flex().flex_col().flex_none().w(px(width)).gap(px(16.)).children(self.render_messages(cx))).into_any_element(),
+            }
+        };
+        let composer = configured.then(|| match column {
+            None => self.render_composer(&model, self.chat_width(), window, cx),
+            Some(width) => div().flex().flex_none().justify_center().pb(px(8.)).child(div().w(px(width + 32.)).child(self.render_composer(&model, width + 32., window, cx))).into_any_element(),
+        });
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
             // The grants of this conversation: what the assistant may do without asking, until when, and a way to take it back.
-            .when((full || !grants.is_empty()) && !listing, |d| {
+            .when(full || !grants.is_empty(), |d| {
                 d.child(
                     div()
                         .flex()
@@ -690,8 +738,7 @@ impl Workspace {
                         .child(ui::secondary_button("grants-revoke", t("撤销")).h(text_px(24.)).on_click(self.on(Cmd::RevokeGrants, cx))),
                 )
             })
-            .child(div().relative().flex().flex_col().flex_1().min_h_0().child(body).when(configured && !listing, |d| d.child(self.render_composer(&model, window, cx))))
-            .into_any_element()
+            .child(div().relative().flex().flex_col().flex_1().min_h_0().child(body).children(composer))
     }
 
     /// The assistant before anything is said: what it can be asked to do.
@@ -888,41 +935,32 @@ impl Workspace {
 
     fn render_history(&self, history: &[ChatInfo], cx: &mut Context<Self>) -> AnyElement {
         if history.is_empty() { return ui::empty_state("history", t("还没有历史对话"), t("和助手说过的话会留在这里，可以点开接着说。")).into_any_element() }
-        div()
-            .id("chat-history-list")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .p(px(8.))
-            .children(history.iter().map(|info| {
-                let current = info.id == self.chat.id;
-                div()
-                    .id(SharedString::from(format!("conversation-{}", info.id)))
-                    .group("conversation")
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .px(px(10.))
-                    .py(px(8.))
-                    .rounded(px(8.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(Theme::hover()))
-                    .on_click(self.on(Cmd::OpenChat(info.id.clone()), cx))
-                    .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().when(current, |d| d.font_weight(FontWeight::MEDIUM)).child(info.title.clone())).child(div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("{} · {} 次请求", "{} · {} requests", time::short_time(&info.updated_at), info.requests))))
-                    .child(ui::icon_action(SharedString::from(format!("conversation-delete-{}", info.id)), "bin", Theme::text_tertiary(), t("删除这次对话")).on_click({
-                        let delete = self.on(Cmd::DeleteChat(info.id.clone()), cx);
-                        move |ev, window, cx| {
-                            cx.stop_propagation();
-                            delete(ev, window, cx);
-                        }
-                    }))
-            }))
-            .into_any_element()
+        div().id("chat-history-list").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().p(px(8.)).children(history.iter().map(|info| self.conversation_row(info, false, cx))).into_any_element()
     }
 
-    fn render_composer(&self, model: &str, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// A kept conversation in a list: its title, when and how often it was asked, and a way to delete it.
+    /// On the assistant's page (`page`) the open one is lit and the delete shows only under the pointer.
+    pub fn conversation_row(&self, info: &ChatInfo, page: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let current = info.id == self.chat.id;
+        div()
+            .id(SharedString::from(format!("conversation-{}", info.id)))
+            .group("conversation")
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(10.))
+            .py(px(8.))
+            .rounded(px(8.))
+            .cursor_pointer()
+            .when(page && current, |d| d.bg(Theme::pressed()))
+            .hover(|s| s.bg(Theme::hover()))
+            .on_click(self.on(Cmd::OpenChat(info.id.clone()), cx))
+            .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().when(current, |d| d.font_weight(FontWeight::MEDIUM)).child(info.title.clone())).child(div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("{} · {} 次请求", "{} · {} requests", time::short_time(&info.updated_at), info.requests))))
+            .child(ui::icon_action(SharedString::from(format!("conversation-delete-{}", info.id)), "bin", Theme::text_tertiary(), t("删除这次对话")).when(page, |d| d.opacity(0.).group_hover("conversation", |s| s.opacity(1.))).on_click(self.on_within(Cmd::DeleteChat(info.id.clone()), cx)))
+    }
+
+    /// The box a request is written in, `width` wide with its margins.
+    fn render_composer(&self, model: &str, width: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let chat = &self.chat;
         let focused = chat.input.focus_handle(cx).is_focused(window);
         let commands = if focused { chat.slash_list(&self.settings.commands, cx) } else { vec![] };
@@ -980,7 +1018,7 @@ impl Workspace {
                     .bg(Theme::bg_body())
                     .shadow(theme::shadow_card())
                     // A pixel width: a wrapping input under ancestors whose widths are all relative is measured too narrow.
-                    .child(div().flex().w(px(self.chat_width() - 32. - 22. - 36.)).py(px(5.)).max_h(px(170.)).overflow_hidden().text_size(text_px(13.)).line_height(text_px(20.)).text_color(Theme::text()).child(chat.input.clone()))
+                    .child(div().flex().w(px(width - 32. - 22. - 36.)).py(px(5.)).max_h(px(170.)).overflow_hidden().text_size(text_px(13.)).line_height(text_px(20.)).text_color(Theme::text()).child(chat.input.clone()))
                     .child(div().flex_1())
                     .child(if chat.busy { round("chat-stop", "square", true).on_click(self.on(Cmd::StopChat, cx)) } else { round("chat-send", "send", ready).on_click(self.on(Cmd::Ask, cx)) }),
             )

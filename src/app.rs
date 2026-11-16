@@ -2,7 +2,7 @@
 //! view, `Workspace`; every click is a `Cmd` value, wired with
 //! `self.on(Cmd::…, cx)` and carried out in `Workspace::run`. The pages
 //! (`overview.rs`, `servers.rs`, `vault.rs`, `tasks.rs`, `audit.rs`,
-//! `settings.rs`) and the assistant (`chat.rs`) are `impl Workspace` blocks.
+//! `settings.rs`, `assistant.rs`) and the assistant (`chat.rs`) are `impl Workspace` blocks.
 //!
 //! Nothing is read from disk or over SSH while drawing: what the pages show
 //! is kept in `View` and read again by `Workspace::reload` after anything
@@ -35,6 +35,8 @@ pub enum Page {
     Tasks,
     Vault,
     Audit,
+    /// The assistant as a page of its own, with its past conversations beside it.
+    Assistant,
     Settings,
 }
 
@@ -49,6 +51,7 @@ impl Page {
             Page::Tasks => "例行任务",
             Page::Vault => "密码库",
             Page::Audit => "操作审计",
+            Page::Assistant => "助手",
             Page::Settings => "设置",
         }
     }
@@ -63,6 +66,7 @@ impl Page {
             Page::Tasks => "list-todo",
             Page::Vault => "plug",
             Page::Audit => "history",
+            Page::Assistant => "message-square",
             Page::Settings => "settings-gear",
         }
     }
@@ -301,6 +305,7 @@ impl Workspace {
         })];
         let chat = Chat::new(cx);
         subscriptions.push(cx.subscribe(&chat.input, |this: &mut Self, _, event: &InputEvent, cx| this.chat_input(*event, cx)));
+        subscriptions.push(cx.subscribe(&chat.search, |_: &mut Self, _, event: &InputEvent, cx| if *event == InputEvent::Changed { cx.notify() }));
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
@@ -505,7 +510,9 @@ impl Workspace {
         self.menu = None;
         match cmd {
             Cmd::SetPage(page) => {
+                if page == Page::Assistant && self.page != Page::Assistant { self.chat.back = self.page }
                 self.page = page;
+                if page == Page::Assistant { self.enter_assistant(window, cx) }
                 if matches!(page, Page::Audit | Page::Overview | Page::Tasks | Page::LongJobs | Page::Security) { self.reload(cx) }
                 if page == Page::Disk { self.load_disk(cx) }
             }
@@ -513,13 +520,18 @@ impl Workspace {
                 self.reload(cx);
                 self.say(t("已重新读取"), cx);
             }
+            // On the assistant's own page there is no panel to fold: the shortcut goes back to the page it came from.
+            Cmd::ToggleChat if self.page == Page::Assistant => self.run(Cmd::SetPage(self.chat.back), window, cx),
             Cmd::ToggleChat => {
                 self.settings.chat_hidden = !self.settings.chat_hidden;
                 self.save_settings(cx);
             }
             Cmd::Ask => self.ask(cx),
             Cmd::StopChat => self.stop_chat(cx),
-            Cmd::NewChat => self.new_chat(cx),
+            Cmd::NewChat => {
+                self.new_chat(cx);
+                if self.page == Page::Assistant { self.focus_composer(window, cx) }
+            }
             Cmd::Suggest(text) => {
                 self.show_chat(cx);
                 self.chat.input.update(cx, |input, cx| input.set_text(&text, cx));
@@ -552,7 +564,10 @@ impl Workspace {
             }
             Cmd::ShowOutput(at) => self.show_output(at, window, cx),
             Cmd::ToggleHistory => self.toggle_history(cx),
-            Cmd::OpenChat(id) => self.open_chat(&id, cx),
+            Cmd::OpenChat(id) => {
+                self.open_chat(&id, cx);
+                if self.page == Page::Assistant { self.focus_composer(window, cx) }
+            }
             Cmd::DeleteChat(id) => self.delete_chat(&id, cx),
             Cmd::RevokeGrants => {
                 self.fleet.revoke_grants(&self.chat.session);
@@ -652,8 +667,9 @@ impl Workspace {
         if let Some(start) = start { window.focus(&start) }
     }
 
+    /// Bring the panel back, unless the assistant's own page is open: there the conversation is on show already.
     pub fn show_chat(&mut self, cx: &mut Context<Self>) {
-        if self.settings.chat_hidden {
+        if self.settings.chat_hidden && self.page != Page::Assistant {
             self.settings.chat_hidden = false;
             self.save_settings(cx);
         }
@@ -705,9 +721,11 @@ impl Render for Workspace {
             Page::Tasks => self.render_tasks(window, cx),
             Page::Vault => self.render_vault(window, cx),
             Page::Audit => self.render_audit(window, cx),
+            Page::Assistant => self.render_assistant(window, cx),
             Page::Settings => self.render_settings(window, cx),
         };
-        let chat_shown = !self.settings.chat_hidden;
+        // The assistant's page draws the conversation itself: the panel (and its edge) is left out, whatever `chat_hidden` says.
+        let chat_shown = !self.settings.chat_hidden && self.page != Page::Assistant;
         let chat = chat_shown.then(|| self.render_chat(window, cx));
         let chat_width = self.chat_width();
         div()
@@ -829,8 +847,7 @@ impl Workspace {
                     .child(row(Page::Tasks, None, self, cx))
                     .child(row(Page::Audit, None, self, cx))
                     .child(div().h(px(10.)))
-                    // Not a page: the assistant beside whichever page is open.
-                    .child(div().id("nav-assistant").flex().items_center().gap(px(9.)).h(text_px(32.)).px(px(10.)).rounded(px(7.)).cursor_pointer().hover(|s| s.bg(Theme::hover())).on_click(self.on(Cmd::FocusChat, cx)).child(ui::icon("message-square", 15., Theme::text_secondary())).child(div().flex_1().min_w_0().truncate().child(t("助手"))))
+                    .child(row(Page::Assistant, None, self, cx))
                     .child(div().flex_1())
                     .child(div().h(px(1.)).mx(px(6.)).my(px(6.)).bg(Theme::line()))
                     .child(row(Page::Vault, None, self, cx))
@@ -889,7 +906,7 @@ impl Workspace {
             .gap(px(8.))
             .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().text_size(text_px(ui::HEAD_TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string())).child(div().truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_tertiary()).child(about.into())))
             .children(actions)
-            .when(self.settings.chat_hidden, |d| d.child(ui::ghost_button("open-assistant", Some("message-square"), Some(t("助手").into())).tooltip(ui::tip(t("打开助手"))).on_click(self.on(Cmd::FocusChat, cx))))
+            .when(self.settings.chat_hidden && self.page != Page::Assistant, |d| d.child(ui::ghost_button("open-assistant", Some("message-square"), Some(t("助手").into())).tooltip(ui::tip(t("打开助手"))).on_click(self.on(Cmd::FocusChat, cx))))
     }
 }
 
@@ -926,6 +943,7 @@ impl Workspace {
                     "tasks" => Page::Tasks,
                     "vault" => Page::Vault,
                     "audit" => Page::Audit,
+                    "assistant" => Page::Assistant,
                     "settings" => Page::Settings,
                     _ => Page::Overview,
                 };
@@ -975,6 +993,8 @@ impl Workspace {
             "add-credential" => self.run(Cmd::AddCredential, window, cx),
             "policy" => self.run(Cmd::EditPolicy(arg.to_string()), window, cx),
             "history" => self.run(Cmd::ToggleHistory, window, cx),
+            "find-chat" => self.chat.search.update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)),
+            "open-chat" => self.run(Cmd::OpenChat(arg.to_string()), window, cx),
             "tab" => self.run(Cmd::SetSettingsTab(match arg { "general" => crate::settings::Tab::General, "skills" => crate::settings::Tab::Skills, _ => crate::settings::Tab::Models }), window, cx),
             "shot" => {
                 let path = PathBuf::from(arg);

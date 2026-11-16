@@ -27,6 +27,11 @@ pub fn short_time(value: &str) -> String {
     parse(value).map(|d| d.with_timezone(&Local).format("%m-%d %H:%M").to_string()).unwrap_or_default()
 }
 
+/// Whole days from the local date of `value` to today's: 0 today, 1 yesterday; None when unparsable.
+pub fn days_ago(value: &str) -> Option<i64> {
+    parse(value).map(|d| (Local::now().date_naive() - d.with_timezone(&Local).date_naive()).num_days())
+}
+
 /// Milliseconds since the epoch, 0 when unparsable.
 pub fn millis(value: &str) -> i64 {
     parse(value).map(|d| d.timestamp_millis()).unwrap_or(0)
@@ -42,5 +47,7 @@ mod tests {
         assert!(millis(&now) > 0);
         assert_eq!(date_text("nope"), "日期待补");
         assert_eq!(date_text(&now).len(), 10);
+        assert_eq!(days_ago(&now), Some(0));
+        assert_eq!(days_ago("nope"), None);
     }
 }

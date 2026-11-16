@@ -10,6 +10,7 @@
 mod i18n;
 mod app;
 mod assets;
+mod assistant;
 mod audit;
 mod chat;
 mod dialogs;
