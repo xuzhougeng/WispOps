@@ -295,7 +295,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Every minute while the window is open: read the inventory again when
+    /// Every minute while the program runs: read the inventory again when
     /// its files changed, inspect the servers whose last inspection is older
     /// than the chosen interval, and run the tasks that are due.
     pub fn watch_fleet(&mut self, cx: &mut Context<Self>) {

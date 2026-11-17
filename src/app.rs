@@ -202,6 +202,8 @@ pub enum Cmd {
     SetLanguage(Language),
     SetFontSize(f32),
     ToggleContrast,
+    ToggleKeepRunning,
+    Quit,
     SetAutoInspect(u32),
     PickChatModel(String),
     AddProvider(&'static str),
@@ -372,8 +374,16 @@ impl Workspace {
         this
     }
 
-    /// Once the window is there: the timers that keep the fleet looked after while it is open.
-    pub fn start(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    /// Once the window is there: the timers that keep the fleet looked after while the program
+    /// runs, and what closing the window means (设置 › 后台运行, `background`).
+    pub fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::background::stay_awake(self.settings.keep_running);
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            if !this.read_with(cx, |this, _| this.settings.keep_running).unwrap_or(false) { return true }
+            crate::background::put_away(window, cx);
+            false
+        });
         self.watch_fleet(cx);
         self.start_updates(cx);
     }
@@ -773,6 +783,7 @@ pub const SIDEBAR_W: f32 = 208.;
 fn bind_keys(cx: &mut App) {
     cx.clear_key_bindings();
     crate::input::bind_keys(cx);
+    crate::background::bind_keys(cx);
     let context = Some("Workspace");
     cx.bind_keys([
         KeyBinding::new("escape", Dismiss, context),
@@ -1118,6 +1129,9 @@ impl Workspace {
                     }
                 });
             }
+            "close" => crate::background::dev_close(false),
+            "hidden" => crate::background::dev_close(true),
+            "keep" => self.run(Cmd::ToggleKeepRunning, window, cx),
             "quit" => cx.quit(),
             other => eprintln!("dev: unknown step {other}"),
         }

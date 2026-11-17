@@ -133,6 +133,7 @@ impl Workspace {
             Cmd::SetLanguage(language) => {
                 self.settings.language = language;
                 crate::i18n::set_language(language);
+                crate::background::set_menus(cx);
                 window.refresh();
             }
             Cmd::SetFontSize(size) => {
@@ -143,6 +144,11 @@ impl Workspace {
                 self.settings.high_contrast = !self.settings.high_contrast;
                 self.apply_appearance(window);
             }
+            Cmd::ToggleKeepRunning => {
+                self.settings.keep_running = !self.settings.keep_running;
+                crate::background::stay_awake(self.settings.keep_running);
+            }
+            Cmd::Quit => return cx.quit(),
             Cmd::SetAutoInspect(minutes) => self.settings.auto_inspect_minutes = minutes,
             Cmd::SetDiskScan(minutes) => self.settings.disk_scan_minutes = minutes,
             Cmd::SetLongHours(hours) => self.settings.long_job_hours = hours,
@@ -307,6 +313,12 @@ impl Workspace {
             .child(div().w(px(40.)).text_center().child(format!("{:.0}", settings.font_size)))
             .child(ui::secondary_button("font-larger", "A+").h(text_px(28.)).on_click(self.on(Cmd::SetFontSize(settings.font_size + 1.), cx)));
         let contrast = div().id("contrast").flex().items_center().gap(px(8.)).cursor_pointer().on_click(self.on(Cmd::ToggleContrast, cx)).child(switch(settings.high_contrast)).child(t("更强的文字和分隔线"));
+        let keep = div().id("keep-running").flex().items_center().gap(px(8.)).cursor_pointer().on_click(self.on(Cmd::ToggleKeepRunning, cx)).child(switch(settings.keep_running)).child(t("关闭窗口后继续运行"));
+        let background = if cfg!(target_os = "macos") {
+            Self::section(t("后台运行"), t("关闭窗口后程序留在后台，自动巡检、例行任务、定时磁盘扫描和外部通知照常进行。点 Dock 上的图标回到窗口，⌘Q 退出。")).child(keep)
+        } else {
+            Self::section(t("后台运行"), t("关闭按钮只把窗口最小化，自动巡检、例行任务、定时磁盘扫描和外部通知照常进行。要退出就用这里的按钮。")).child(div().flex().items_center().gap(px(16.)).child(keep).when(settings.keep_running, |d| d.child(ui::secondary_button("quit", t("退出 WispOps")).h(text_px(28.)).on_click(self.on(Cmd::Quit, cx)))))
+        };
         let row = |label: &str, control: AnyElement| div().flex().items_center().gap(px(16.)).child(div().w(px(120.)).flex_none().text_color(Theme::text_secondary()).child(label.to_string())).child(control);
         div()
             .flex()
@@ -314,9 +326,10 @@ impl Workspace {
             .gap(px(24.))
             .child(Self::section(t("外观"), "").child(row(t("主题"), appearance.into_any_element())).child(row(t("语言"), language.into_any_element())).child(row(t("字号"), size.into_any_element())).child(row(t("高对比度"), contrast.into_any_element())))
             .child(
-                Self::section(t("自动巡检"), t("窗口开着时，每台服务器距上次巡检超过这个间隔就以只读方式、不使用 sudo 巡检一次并写入历史；机群总览据此显示状态和趋势。不调用模型。"))
+                Self::section(t("自动巡检"), t("程序运行时，每台服务器距上次巡检超过这个间隔就以只读方式、不使用 sudo 巡检一次并写入历史；机群总览据此显示状态和趋势。不调用模型。"))
                     .child(row(t("间隔"), ui::secondary_button("auto-inspect", interval_label(settings.auto_inspect_minutes)).child(ui::icon("chevron-down", 12., Theme::text_tertiary())).on_click(self.on_menu(MenuKind::AutoInspect, cx)).into_any_element())),
             )
+            .child(background)
             .child(self.render_webhooks(cx))
             .child(Self::section(t("网络"), t("模型请求、更新检查、外部通知和设备同步走的代理（发往本机的请求不走）。SSH 连接不受它影响，仍按 ~/.ssh/config。")).child(row(t("全局代理"), div().w(px(420.)).child(ui::field(&self.settings_view.proxy, window, cx)).into_any_element())))
             .child(self.render_sync(window, cx))

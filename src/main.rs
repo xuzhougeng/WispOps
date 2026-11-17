@@ -12,6 +12,7 @@ mod app;
 mod assets;
 mod assistant;
 mod audit;
+mod background;
 mod chat;
 mod cron;
 mod check_scripts;
@@ -46,6 +47,8 @@ pub(crate) const APP_ID: &str = "com.wisp.ops";
 
 fn main() {
     let app = Application::new().with_assets(assets::Assets);
+    // The Dock icon of a hidden program (`background::put_away`) brings its window back.
+    app.on_reopen(|cx| cx.activate(true));
     app.run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1400.), px(880.)), cx);
         cx.open_window(
@@ -66,6 +69,7 @@ fn main() {
             workspace.dev_start(window, cx);
         })
         .ok();
+        background::install(cx);
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() { cx.quit() }
         })

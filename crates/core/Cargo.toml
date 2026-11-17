@@ -1,6 +1,6 @@
 [package]
 name = "wisp_ops_core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "WispOps's assistant engine: model providers, request bodies and stream parsing, settings, skills, Markdown. No GPUI."
 license = "MIT"
