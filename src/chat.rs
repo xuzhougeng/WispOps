@@ -88,11 +88,11 @@ pub struct Chat {
     /// Which of the slash commands on offer is picked.
     pub slash: usize,
     slash_closed: bool,
-    /// The past conversations, while their list is on show.
-    pub history: Option<Vec<ChatInfo>>,
-    /// The kept conversations as the assistant's page lists them: read when the page is entered and after each change.
+    /// On the assistant's page, the kept conversations are on show in place of the conversation.
+    pub history: bool,
+    /// The kept conversations as that list shows them: read when the page is entered and after each change.
     pub conversations: Vec<ChatInfo>,
-    /// What the page's list is filtered by.
+    /// What the list is filtered by.
     pub search: Entity<TextInput>,
     /// The page the assistant's page was entered from: where its shortcut goes back to.
     pub back: Page,
@@ -120,7 +120,7 @@ impl Chat {
             input
         });
         let search = cx.new(|cx| TextInput::new("搜索对话", cx));
-        Chat { input, messages: vec![], wire: vec![], protocol: None, steps: 0, ctx: None, busy: false, error: String::new(), note: String::new(), scroll: ScrollHandle::new(), generation: 0, id: String::new(), created_at: String::new(), session: new_session(), slash: 0, slash_closed: false, history: None, conversations: vec![], search, back: Page::Overview, pending: None, running: vec![], cancel: Arc::new(AtomicBool::new(false)), tools_open: Default::default(), started: None }
+        Chat { input, messages: vec![], wire: vec![], protocol: None, steps: 0, ctx: None, busy: false, error: String::new(), note: String::new(), scroll: ScrollHandle::new(), generation: 0, id: String::new(), created_at: String::new(), session: new_session(), slash: 0, slash_closed: false, history: false, conversations: vec![], search, back: Page::Overview, pending: None, running: vec![], cancel: Arc::new(AtomicBool::new(false)), tools_open: Default::default(), started: None }
     }
 
     /// The slash commands to offer for what is in the box right now.
@@ -254,7 +254,7 @@ impl Workspace {
         chat.id.clear();
         chat.created_at.clear();
         chat.session = new_session();
-        chat.history = None;
+        chat.history = false;
         chat.pending = None;
         chat.tools_open.clear();
         self.show_chat(cx);
@@ -282,7 +282,7 @@ impl Workspace {
                 return cx.notify();
             }
         };
-        chat.history = None;
+        chat.history = false;
         // A changed protocol starts the wire again from the text of what was said:
         // the model's own turns are only valid in the conversation that produced them.
         let replay = chat.ctx.is_none() || chat.protocol != Some(profile.protocol);
@@ -590,18 +590,9 @@ impl Workspace {
         self.relist();
     }
 
-    /// Read the kept conversations again for whichever list is on show: the page's, the panel's.
+    /// Read the kept conversations again, where their list can be shown: on the assistant's page.
     pub fn relist(&mut self) {
         if self.page == Page::Assistant { self.chat.conversations = list_conversations(&self.fleet) }
-        if self.chat.history.is_some() { self.chat.history = Some(list_conversations(&self.fleet)) }
-    }
-
-    pub fn toggle_history(&mut self, cx: &mut Context<Self>) {
-        self.chat.history = match self.chat.history.take() {
-            Some(_) => None,
-            None => Some(list_conversations(&self.fleet)),
-        };
-        cx.notify();
     }
 
     /// Take up a kept conversation: what was said is shown again, and the
@@ -629,10 +620,10 @@ impl Workspace {
 
     pub fn delete_chat(&mut self, id: &str, cx: &mut Context<Self>) {
         let _ = std::fs::remove_file(conversations_dir(&self.fleet).join(format!("{id}.json")));
-        // The panel's list stays open: deleting the open conversation starts a new one, which closes it.
-        let listing = self.chat.history.is_some();
+        // The list stays open: deleting the open conversation starts a new one, which closes it.
+        let listing = self.chat.history;
         if self.chat.id == id { self.new_chat(cx) }
-        if listing { self.chat.history = Some(vec![]) }
+        self.chat.history = listing;
         self.relist();
         cx.notify();
     }
@@ -655,15 +646,11 @@ impl Workspace {
         }
     }
 
-    /// The panel beside a page: its header, and the conversation or the list of past ones.
+    /// The assistant over or beside a page: its header and the conversation. The kept conversations are on its own page.
     pub fn render_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let chat = &self.chat;
-        let listing = chat.history.is_some();
-        let scope = if listing { t("点开一次对话可以接着说").to_string() } else { self.chat_scope() };
-        let body = match &chat.history {
-            Some(history) => self.render_history(history, cx),
-            None => self.render_conversation(None, window, cx).into_any_element(),
-        };
+        let scope = self.chat_scope();
+        let docked = self.settings.chat_docked;
+        let body = self.render_conversation(None, window, cx);
         let chat = &self.chat;
         div()
             .flex()
@@ -677,20 +664,21 @@ impl Workspace {
                             .flex_col()
                             .flex_1()
                             .min_w_0()
-                            .child(div().truncate().text_size(text_px(ui::HEAD_TITLE)).font_weight(FontWeight::SEMIBOLD).child(if listing { t("历史对话") } else { t("助手") }))
+                            .child(div().truncate().text_size(text_px(ui::HEAD_TITLE)).font_weight(FontWeight::SEMIBOLD).child(t("助手")))
                             .child(div().id("chat-scope").truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_tertiary()).tooltip(ui::tip(scope.clone())).child(scope)),
                     )
-                    .child(ui::ghost_button("chat-history", Some(if listing { "arrow-left" } else { "history" }), None).tooltip(ui::tip(if listing { t("返回对话") } else { t("历史对话") })).on_click(self.on(Cmd::ToggleHistory, cx)))
-                    .when(!chat.messages.is_empty() && !listing, |d| d.child(ui::ghost_button("chat-new", Some("plus"), None).tooltip(ui::tip(t("新对话"))).on_click(self.on(Cmd::NewChat, cx))))
+                    .when(!chat.messages.is_empty(), |d| d.child(ui::ghost_button("chat-new", Some("plus"), None).tooltip(ui::tip(t("新对话"))).on_click(self.on(Cmd::NewChat, cx))))
+                    .child(ui::ghost_button("chat-history", Some("history"), None).tooltip(ui::tip(t("历史对话"))).on_click(self.on(Cmd::ToggleHistory, cx)))
+                    .child(ui::ghost_button("chat-dock", Some(if docked { "picture-in-picture" } else { "panel-right" }), None).tooltip(ui::tip(if docked { t("改为悬浮窗") } else { t("停靠到右侧") })).on_click(self.on(Cmd::DockChat(!docked), cx)))
                     .child(ui::ghost_button("chat-page", Some("expand"), None).tooltip(ui::tip(t("在页面中打开"))).on_click(self.on(Cmd::SetPage(Page::Assistant), cx)))
-                    .child(ui::ghost_button("chat-hide", Some("panel-left"), None).tooltip(ui::tip(t("收起助手"))).on_click(self.on(Cmd::ToggleChat, cx))),
+                    .child(ui::ghost_button("chat-hide", Some("x"), None).tooltip(ui::tip(t("收起助手"))).on_click(self.on(Cmd::ToggleChat, cx))),
             )
             .child(body)
             .into_any_element()
     }
 
     /// The conversation itself: the grants strip, the messages (or the start), the consent card and the composer.
-    /// Drawn once a frame, in the panel or on the assistant's page; there `column` is the width its text is kept to.
+    /// Drawn once a frame: floating, in the column or on the assistant's page; there `column` is the width its text is kept to.
     pub fn render_conversation(&self, column: Option<f32>, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let chat = &self.chat;
         let profile = self.settings.chat_profile();
@@ -937,14 +925,9 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_history(&self, history: &[ChatInfo], cx: &mut Context<Self>) -> AnyElement {
-        if history.is_empty() { return ui::empty_state("history", t("还没有历史对话"), t("和助手说过的话会留在这里，可以点开接着说。")).into_any_element() }
-        div().id("chat-history-list").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().p(px(8.)).children(history.iter().map(|info| self.conversation_row(info, false, cx))).into_any_element()
-    }
-
-    /// A kept conversation in a list: its title, when and how often it was asked, and a way to delete it.
-    /// On the assistant's page (`page`) the open one is lit and the delete shows only under the pointer.
-    pub fn conversation_row(&self, info: &ChatInfo, page: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// A kept conversation in the list: its title, when and how often it was asked, and a way to delete it
+    /// under the pointer. The open one is lit.
+    pub fn conversation_row(&self, info: &ChatInfo, cx: &mut Context<Self>) -> Stateful<Div> {
         let current = info.id == self.chat.id;
         div()
             .id(SharedString::from(format!("conversation-{}", info.id)))
@@ -956,11 +939,11 @@ impl Workspace {
             .py(px(8.))
             .rounded(px(8.))
             .cursor_pointer()
-            .when(page && current, |d| d.bg(Theme::pressed()))
+            .when(current, |d| d.bg(Theme::pressed()))
             .hover(|s| s.bg(Theme::hover()))
             .on_click(self.on(Cmd::OpenChat(info.id.clone()), cx))
             .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().when(current, |d| d.font_weight(FontWeight::MEDIUM)).child(info.title.clone())).child(div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("{} · {} 次请求", "{} · {} requests", time::short_time(&info.updated_at), info.requests))))
-            .child(ui::icon_action(SharedString::from(format!("conversation-delete-{}", info.id)), "bin", Theme::text_tertiary(), t("删除这次对话")).when(page, |d| d.opacity(0.).group_hover("conversation", |s| s.opacity(1.))).on_click(self.on_within(Cmd::DeleteChat(info.id.clone()), cx)))
+            .child(ui::icon_action(SharedString::from(format!("conversation-delete-{}", info.id)), "bin", Theme::text_tertiary(), t("删除这次对话")).opacity(0.).group_hover("conversation", |s| s.opacity(1.)).on_click(self.on_within(Cmd::DeleteChat(info.id.clone()), cx)))
     }
 
     /// The box a request is written in, `width` wide with its margins.
