@@ -7,7 +7,7 @@
 use crate::app::{Cmd, MenuKind, Workspace};
 use crate::dialogs::{BindForm, HostForm, ImportForm, Modal, PolicyForm};
 use crate::i18n::t;
-use crate::ops::{HostDraft, HostView};
+use crate::ops::{HostDraft, HostView, NewLogin};
 use crate::theme::{Theme, text_px};
 use crate::tools;
 use crate::ui;
@@ -117,9 +117,25 @@ impl Workspace {
                 self.modal_focus = true;
             }
             Cmd::TestCredential => self.test_credential(cx),
+            Cmd::HostLogin(login) => {
+                let first = self.view.credentials.first().map(|credential| credential.name.clone()).unwrap_or_default();
+                if let Some(Modal::Host(form)) = self.modal.as_mut() {
+                    form.login = login;
+                    if login == "vault" && form.picked.is_empty() { form.picked = first }
+                    // A password typed and then turned away from does not stay in a field out of sight.
+                    if login != "password" { form.password.update(cx, |input, cx| input.set_text("", cx)) }
+                    self.modal_error.clear();
+                    if login == "password" { form.password.update(cx, |input, _| input.focus(window)) }
+                }
+            }
+            Cmd::HostPick(name) => {
+                if let Some(Modal::Host(form)) = self.modal.as_mut() { form.picked = name }
+            }
+            Cmd::HostSudoToo => {
+                if let Some(Modal::Host(form)) = self.modal.as_mut() { form.sudo = !form.sudo }
+            }
             _ => {}
         }
-        let _ = window;
     }
 
     fn host_dialog(&mut self, editing: Option<String>, cx: &mut Context<Self>) {
@@ -135,8 +151,13 @@ impl Workspace {
             jump: self.modal_input("bastion 或 user@bastion", &text(|h| h.jump.clone()), false, cx),
             identity: self.modal_input("~/.ssh/id_ed25519", &text(|h| h.identity.clone()), false, cx),
             description: self.modal_input("这台服务器是做什么的", &text(|h| h.description.clone()), false, cx),
+            login: "key",
+            password: self.modal_input("", "", false, cx),
+            picked: String::new(),
+            sudo: false,
             editing,
         };
+        form.password.update(cx, |input, _| input.masked = true);
         self.open_modal(Modal::Host(form), cx);
     }
 
@@ -157,7 +178,20 @@ impl Workspace {
                     description: read(&form.description),
                 };
                 let (editing, name) = (form.editing.clone(), draft.name.clone());
-                self.fleet.save_host(editing.as_deref(), draft)?;
+                match &editing {
+                    Some(_) => self.fleet.save_host(editing.as_deref(), draft)?,
+                    None => {
+                        let taken: Vec<&str> = self.view.credentials.iter().map(|credential| credential.name.as_str()).collect();
+                        let login = match form.login {
+                            "password" => NewLogin::Password { name: new_credential_name(&name, false, &draft.user, &taken), password: form.password.read(cx).text().to_string(), sudo: form.sudo },
+                            "vault" => NewLogin::Credential { name: form.picked.clone(), sudo: form.sudo },
+                            _ => NewLogin::Key,
+                        };
+                        self.fleet.add_host(draft, login)?;
+                        // The password leaves the field with the dialog.
+                        form.password.update(cx, |input, cx| input.set_text("", cx));
+                    }
+                }
                 self.reload(cx);
                 self.selected_host = Some(name.clone());
                 // A new server is looked at once: what it is and what it can do.

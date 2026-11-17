@@ -209,7 +209,7 @@ impl Workspace {
             .on_click(self.on(Cmd::ToggleLongHost(host.to_string()), cx))
             .child(ui::icon(if folded { "chevron-right" } else { "chevron-down" }, 13., Theme::text_tertiary()))
             .child(if working { ui::spinner(SharedString::from(format!("long-working-{host}")), 12., Theme::accent()).into_any_element() } else { div().flex_none().size(px(9.)).m(px(1.5)).rounded_full().bg(Theme::star()).into_any_element() })
-            .child(div().id(SharedString::from(format!("long-host-{host}"))).font_weight(FontWeight::MEDIUM).cursor_pointer().hover(|s| s.text_color(Theme::accent())).on_click(self.on_within(Cmd::SelectHost(Some(host.to_string())), cx)).child(host.to_string()))
+            .child(div().font_weight(FontWeight::MEDIUM).child(host.to_string()))
             .child(div().text_size(text_px(12.)).text_color(Theme::text_secondary()).child(if filter.is_empty() { tf!("{} 个任务", "{} tasks", all.len()) } else { tf!("{} / {} 个任务", "{} / {} tasks", jobs.len(), all.len()) }))
             .child(div().flex_1())
             .children(row.map(|row| div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("检查于 {}", "checked {}", time::short_time(&row.at)))))

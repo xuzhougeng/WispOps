@@ -96,6 +96,9 @@ pub struct Chat {
     pub search: Entity<TextInput>,
     /// The page the assistant's page was entered from: where its shortcut goes back to.
     pub back: Page,
+    /// The page the conversation was opened over: floating, it is put away when another page is
+    /// gone to, and opened there the assistant starts a conversation of that page's own.
+    pub page: Page,
     /// The tool calls waiting for the person's consent.
     pub pending: Option<PendingTools>,
     /// The calls running now, which get an answer of their own if the person stops.
@@ -120,7 +123,7 @@ impl Chat {
             input
         });
         let search = cx.new(|cx| TextInput::new("搜索对话", cx));
-        Chat { input, messages: vec![], wire: vec![], protocol: None, steps: 0, ctx: None, busy: false, error: String::new(), note: String::new(), scroll: ScrollHandle::new(), generation: 0, id: String::new(), created_at: String::new(), session: new_session(), slash: 0, slash_closed: false, history: false, conversations: vec![], search, back: Page::Overview, pending: None, running: vec![], cancel: Arc::new(AtomicBool::new(false)), tools_open: Default::default(), started: None }
+        Chat { input, messages: vec![], wire: vec![], protocol: None, steps: 0, ctx: None, busy: false, error: String::new(), note: String::new(), scroll: ScrollHandle::new(), generation: 0, id: String::new(), created_at: String::new(), session: new_session(), slash: 0, slash_closed: false, history: false, conversations: vec![], search, back: Page::Overview, page: Page::Overview, pending: None, running: vec![], cancel: Arc::new(AtomicBool::new(false)), tools_open: Default::default(), started: None }
     }
 
     /// The slash commands to offer for what is in the box right now.

@@ -21,6 +21,14 @@ pub struct HostForm {
     pub jump: Entity<TextInput>,
     pub identity: Entity<TextInput>,
     pub description: Entity<TextInput>,
+    /// For a new server, how it logs in: `key`, `password` (written here, kept in the vault) or `vault` (a credential kept already).
+    pub login: &'static str,
+    /// The password of `password`.
+    pub password: Entity<TextInput>,
+    /// The credential of `vault`.
+    pub picked: String,
+    /// Whether sudo uses the same password.
+    pub sudo: bool,
 }
 
 /// What a host's policy says for the three capabilities; empty inherits.
@@ -117,7 +125,12 @@ impl Modal {
     /// are taken apart field by field, so a form that gains a field does not build until it is here.
     pub fn inputs(&self) -> Vec<&Entity<TextInput>> {
         match self {
-            Modal::Host(HostForm { editing: _, name, address, user, port, groups, jump, identity, description }) => vec![name, groups, address, user, port, jump, identity, description],
+            Modal::Host(HostForm { editing: _, name, address, user, port, groups, jump, identity, description, login, password, picked: _, sudo: _ }) => {
+                let mut fields = vec![name, groups, address, user, port, jump, identity];
+                if *login == "password" { fields.push(password) }
+                fields.push(description);
+                fields
+            }
             Modal::Credential(form) | Modal::Bind(BindForm { new: Some(form), .. }) => form.inputs(),
             Modal::Task(TaskForm { editing: _, name, description, targets, playbook: _, paths, instruction, commands, schedule: _, daily, weekdays: _, every, cron, zone: _, sudo: _, script: _, origin }) => [vec![name, description, targets], origin.inputs(), vec![paths, commands, instruction, daily, every, cron]].concat(),
             Modal::Template(form) => form.inputs(),
@@ -253,8 +266,41 @@ impl Workspace {
                     .child(field("地址（主机名、IP 或 ssh_config 里的别名）", &form.address, window, cx))
                     .child(div().flex().gap(px(12.)).child(div().flex_1().child(field("用户名", &form.user, window, cx))).child(div().w(px(120.)).child(field("端口", &form.port, window, cx))))
                     .child(div().flex().gap(px(12.)).child(div().flex_1().child(field("跳板机（可选）", &form.jump, window, cx))).child(div().flex_1().child(field("私钥文件（可选）", &form.identity, window, cx))))
+                    // How a new server logs in is settled here, so its first probe has the password; one kept already is changed in its details.
+                    .when(form.editing.is_none(), |d| {
+                        let choice = |key: &'static str, label: &str, this: &Self, cx: &mut Context<Self>| (div().id(SharedString::from(format!("host-login-{key}"))).on_click(this.on(Cmd::HostLogin(key), cx)).child(t(label).to_string()), form.login == key);
+                        let mut choices = vec![choice("key", "SSH 密钥", self, cx), choice("password", "密码", self, cx)];
+                        if !self.view.credentials.is_empty() { choices.push(choice("vault", "密码库里的凭据", self, cx)) }
+                        let tick = |on: bool| div().flex().flex_none().items_center().justify_center().size(px(16.)).rounded(px(4.)).border_1().border_color(if on { Theme::accent() } else { Theme::line_strong() }).when(on, |d| d.bg(Theme::accent()).child(ui::icon("check", 12., Theme::on_accent())));
+                        d.child(ui::form_row(t("登录方式").to_string(), segmented(choices)))
+                            .when(form.login == "password", |d| d.child(field("登录密码（加密存入密码库）", &form.password, window, cx)))
+                            .when(form.login == "vault", |d| {
+                                d.child(div().id("host-credentials").flex().flex_col().gap(px(6.)).max_h(px(150.)).overflow_y_scroll().children(self.view.credentials.iter().enumerate().map(|(n, credential)| {
+                                    let chosen = form.picked == credential.name;
+                                    div()
+                                        .id(("host-credential", n))
+                                        .flex()
+                                        .flex_none()
+                                        .items_center()
+                                        .gap(px(10.))
+                                        .px(px(10.))
+                                        .h(text_px(34.))
+                                        .rounded(px(8.))
+                                        .border_1()
+                                        .border_color(if chosen { Theme::accent() } else { Theme::line() })
+                                        .when(chosen, |d| d.bg(Theme::accent_soft()))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(Theme::hover()))
+                                        .on_click(self.on(Cmd::HostPick(credential.name.clone()), cx))
+                                        .child(div().flex().flex_none().items_center().justify_center().size(px(14.)).rounded_full().border_1().border_color(if chosen { Theme::accent() } else { Theme::line_strong() }).when(chosen, |d| d.child(div().size(px(8.)).rounded_full().bg(Theme::accent()))))
+                                        .child(div().flex_1().min_w_0().truncate().child(credential.name.clone()))
+                                        .child(div().flex_none().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(if credential.agent { credential.username.clone() } else { t("不允许自动化使用").to_string() }))
+                                })))
+                            })
+                            .when(form.login != "key", |d| d.child(div().id("host-sudo").flex().items_center().gap(px(8.)).cursor_pointer().on_click(self.on(Cmd::HostSudoToo, cx)).child(tick(form.sudo)).child(t("sudo 也用这个密码"))))
+                    })
                     .child(field("备注", &form.description, window, cx))
-                    .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("默认用本机的 SSH 密钥和 ~/.ssh/config 登录；需要密码登录或 sudo 密码时，保存后在服务器详情里关联密码库的凭据。保存后会做一次只读的能力探测。"))),
+                    .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(if form.editing.is_some() { t("登录和 sudo 的凭据在服务器详情里更换。") } else { t("SSH 密钥方式用本机的密钥和 ~/.ssh/config 登录。保存后会做一次只读的能力探测；凭据之后可以在服务器详情里更换。") })),
                 Some(t("保存").to_string()),
                 false,
             ),

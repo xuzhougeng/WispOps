@@ -6,7 +6,7 @@
 //! the window may use root (a root login, passwordless sudo, or a linked
 //! sudo credential) it does; elsewhere the row says what could not be read.
 
-use crate::app::{Cmd, Page, Workspace};
+use crate::app::{Cmd, MenuKind, Page, Workspace};
 use crate::i18n::t;
 use crate::servers::state_color;
 use crate::theme::{self, Theme, text_px};
@@ -158,6 +158,7 @@ impl Workspace {
             .cursor_pointer()
             .hover(|s| s.bg(Theme::hover()))
             .on_click(self.on(Cmd::OpenAttack(host.to_string()), cx))
+            .on_mouse_down(MouseButton::Right, self.on_context(MenuKind::AttackHost(host.to_string()), cx))
             .child(if working { ui::spinner(SharedString::from(format!("attack-working-{host}")), 12., Theme::accent()).into_any_element() } else { div().flex_none().size(px(9.)).m(px(1.5)).rounded_full().bg(state_color(state)).into_any_element() })
             .child(div().w(px(150.)).flex_none().truncate().font_weight(FontWeight::MEDIUM).child(host.to_string()))
             .child(chart)
