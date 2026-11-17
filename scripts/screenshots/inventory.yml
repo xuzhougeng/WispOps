@@ -1,0 +1,47 @@
+# The fictional fleet of the README's screenshots; fake-ssh.py answers for it.
+groups:
+  gpu:
+    description: GPU 训练节点
+    policy: { change: ask, sudo: allow, destructive: ask }
+  web:
+    description: 对外服务
+    policy: { destructive: deny }
+  infra:
+    description: 数据库、存储与跳板机
+    policy: { change: ask, sudo: allow, destructive: deny }
+
+hosts:
+  - { name: gpu-01, ssh: ops@10.20.0.11, groups: [gpu], tags: { site: bj, rack: a3 } }
+  - { name: gpu-02, ssh: ops@10.20.0.12, groups: [gpu], tags: { site: bj, rack: a3 } }
+  - { name: gpu-03, ssh: ops@10.20.0.13, groups: [gpu], tags: { site: sh, rack: c1 } }
+  - { name: web-01, ssh: ops@10.20.1.21, groups: [web], tags: { env: prod } }
+  - { name: web-02, ssh: ops@10.20.1.22, groups: [web], tags: { env: prod } }
+  - { name: db-01, ssh: ops@10.20.1.31, groups: [infra], tags: { env: prod } }
+  - { name: storage-01, ssh: ops@10.20.2.41, groups: [infra], tags: { site: bj } }
+  - { name: bastion, ssh: ops@10.20.9.1, groups: [infra], tags: { site: bj } }
+
+tasks:
+  - name: morning-inspect
+    description: 每天早上巡检全部服务器
+    targets: all
+    playbook: inspect
+    schedule: { daily: "08:30" }
+  - name: gpu-data-space
+    description: 每 6 小时统计 GPU 节点 /data 的目录占用
+    targets: "@gpu"
+    playbook: space
+    paths: [/data]
+    sudo: true
+    schedule: { cron: "0 */6 * * *" }
+  - name: edge-security
+    description: 工作日早上排查跳板机和 Web 服务器的登录攻击
+    targets: bastion, web-01, web-02
+    playbook: security
+    hours: 24
+    sudo: true
+    schedule: { daily: "08:00", weekdays: [1, 2, 3, 4, 5] }
+  - name: weekly-inspect
+    description: 每周一上午巡检全部服务器
+    targets: all
+    playbook: inspect
+    schedule: { cron: "0 9 * * 1" }

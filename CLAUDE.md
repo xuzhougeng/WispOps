@@ -16,6 +16,7 @@ cargo clippy --features runtime_shaders --all-targets   # expected to be warning
 - Debug builds script the window: `WISP_OPS_DEV="page:servers,2@shot:/tmp/a.png,3@quit"` (steps in `dev_step` at the end of `src/app.rs`; `shot:` renders off-screen to a PNG). The assistant is put away at start unless it was left docked (a round button at the bottom right): `assistant` opens it, `dock:on`/`dock:off` stands it beside the pages or floats it, `history` shows the kept conversations. `close` presses the window's close button through the system and `hidden` prints what became of the program (设置 › 后台运行); `keep` flips that switch.
 - With the fake ssh on macOS set `ssh.loadProfile` to `false` (the profile puts the real `ps`/`du` before any fakes), and note that the security script's `/home/*` glob hangs on the automount.
 - An end-to-end run without servers: point `config.json`'s `ssh.binary` at `crates/engine/tests/fixtures/fake-ssh.sh`, which runs the "remote" script locally.
+- The README's screenshots (`docs/screenshots/`) come from `scripts/screenshots/take.sh` (macOS, debug build): a fictional fleet answered by `fake-ssh.py` (canned GNU/Linux output, picked by each collector's section markers) and one scripted conversation from `fake-model.py` (chat completions on 127.0.0.1). A collector whose markers change needs its answer there updated; rerun after visible UI changes.
 - In a `#[cfg(test)]` module of a file with `use gpui::*`, do not `use super::*` (it brings in gpui's `test` attribute).
 
 ## CI and releases

@@ -1192,6 +1192,9 @@ impl Workspace {
             "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
             "probe" => self.run(Cmd::ProbeHost(arg.to_string()), window, cx),
             "add-task" => self.run(Cmd::AddTask, window, cx),
+            // A routine task run once, as its 运行一次 button does, and its timer switched: `run-task:<name>`, `toggle-task:<name>`.
+            "run-task" => self.run(Cmd::RunTask(arg.to_string()), window, cx),
+            "toggle-task" => self.run(Cmd::ToggleTask(arg.to_string()), window, cx),
             "weekday" => self.run(Cmd::ToggleTaskWeekday(arg.parse().unwrap_or(1)), window, cx),
             "schedule" => self.run(Cmd::PickSchedule(match arg { "cron" => "cron", "every" => "every", "manual" => "manual", _ => "daily" }), window, cx),
             "cron" => {
