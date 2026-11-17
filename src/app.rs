@@ -923,7 +923,7 @@ impl Workspace {
                     .px(px(10.))
                     .pb(px(10.))
                     .gap(px(2.))
-                    .child(div().flex().items_center().gap(px(8.)).h(ui::head_h()).px(px(8.)).child(div().flex().flex_none().items_center().justify_center().size(px(26.)).rounded(px(7.)).bg(Theme::accent()).child(ui::icon("scan-text", 15., Theme::on_accent()))).child(div().flex().flex_col().min_w_0().child(div().text_size(text_px(14.)).font_weight(FontWeight::SEMIBOLD).child("WispOps")).child(div().truncate().text_size(text_px(11.)).line_height(text_px(14.)).text_color(Theme::text_tertiary()).child(tf!("{} 台服务器", "{} servers", self.view.hosts.len())))))
+                    .child(div().flex().items_center().gap(px(8.)).h(ui::head_h()).px(px(8.)).child(img("branding/app-mark.svg").flex_none().size(px(26.)).rounded(px(6.)).border_1().border_color(Theme::line())).child(div().flex().flex_col().min_w_0().child(div().text_size(text_px(14.)).font_weight(FontWeight::SEMIBOLD).child("WispOps")).child(div().truncate().text_size(text_px(11.)).line_height(text_px(14.)).text_color(Theme::text_tertiary()).child(tf!("{} 台服务器", "{} servers", self.view.hosts.len())))))
                     .child(row(Page::Overview, Some(troubled), self, cx))
                     .child(row(Page::Servers, None, self, cx))
                     .child(div().h(px(10.)))
