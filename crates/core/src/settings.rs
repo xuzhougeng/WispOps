@@ -55,6 +55,8 @@ pub struct Settings {
     pub long_job_hours: u32,
     /// Ask GitHub for a newer release at start and at most once a day.
     pub auto_update_check: bool,
+    /// Closing the window leaves the program running (timers, routine tasks, notifications) instead of quitting.
+    pub keep_running: bool,
     /// Where state changes and routine-task runs are sent (外部 webhook 通知).
     pub webhooks: Vec<Webhook>,
     /// Which routine-task runs are sent: `always`, `problems` or `change` (`WEBHOOK_TASKS`).
@@ -84,7 +86,7 @@ pub const WEBHOOK_TASKS: [&str; 3] = ["always", "problems", "change"];
 impl Default for Settings {
     fn default() -> Self {
         let providers = provider::DEFAULT_PRESETS.iter().filter_map(|key| provider::preset(key)).map(Provider::from_preset).collect();
-        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24, auto_update_check: true, webhooks: vec![], webhook_tasks: "problems".into() };
+        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24, auto_update_check: true, keep_running: cfg!(target_os = "macos"), webhooks: vec![], webhook_tasks: "problems".into() };
         settings.tidy();
         settings
     }

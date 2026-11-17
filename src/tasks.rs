@@ -236,7 +236,7 @@ impl Workspace {
             )
             .child(div().flex().items_end().gap(px(12.)).child(ui::form_row(t("运行时间").to_string(), schedules)).when(form.schedule == "daily", |d| d.child(div().w(px(84.)).flex_none().child(ui::field(&form.daily, window, cx)))).children(weekdays).when(form.schedule == "every", |d| d.child(div().w(px(100.)).child(ui::field(&form.every, window, cx))).child(div().pb(px(8.)).text_color(Theme::text_tertiary()).child(t("分钟")))).when(form.schedule == "cron", |d| d.child(div().flex_1().child(ui::field(&form.cron, window, cx)))))
             .when_some(cron, |d, cron| d.child(cron))
-            .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("任务只采集和记录，不做任何变更。命令在保存时按与助手相同的分类器校验，只接受只读命令。定时运行需要这个窗口开着。")));
+            .child(div().text_size(text_px(12.)).line_height(text_px(18.)).text_color(Theme::text_tertiary()).child(t("任务只采集和记录，不做任何变更。命令在保存时按与助手相同的分类器校验，只接受只读命令。定时运行需要程序在运行（设置里可以让它在关闭窗口后留在后台）。")));
         (if form.editing.is_some() { t("编辑例行任务").to_string() } else { t("新建例行任务").to_string() }, TASK_FORM_W, body, Some(t("保存").to_string()), false)
     }
 
