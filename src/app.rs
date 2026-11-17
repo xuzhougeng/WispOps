@@ -35,7 +35,7 @@ pub enum Page {
     Tasks,
     Vault,
     Audit,
-    /// The assistant as a page of its own, with its past conversations beside it.
+    /// The assistant as a page of its own; its past conversations are a view of it.
     Assistant,
     Settings,
 }
@@ -96,6 +96,8 @@ pub enum Cmd {
     Refresh,
     // ---- the assistant
     ToggleChat,
+    /// Stand the assistant beside the pages as a column (true), or float it over them.
+    DockChat(bool),
     Ask,
     StopChat,
     NewChat,
@@ -111,6 +113,7 @@ pub enum Cmd {
     ToggleTools(usize),
     /// Show what a tool returned, in full.
     ShowOutput(usize),
+    /// The kept conversations, on the assistant's page: show them, or go back to the conversation.
     ToggleHistory,
     OpenChat(String),
     DeleteChat(String),
@@ -296,9 +299,6 @@ pub struct Workspace {
     pub host_search: Entity<TextInput>,
     /// The hosts being probed or inspected from the window right now.
     pub working: HashSet<String>,
-    /// The assistant's panel stays folded while there is no model it could use, until it is asked for:
-    /// a third of the window for "no model configured" on every page is a poor first sight.
-    pub chat_parked: bool,
     /// Why the last capability probe of a host failed, until one succeeds.
     pub probe_errors: HashMap<String, String>,
     // ---- overview: the inspection of a host that is on show (host, its place in the history).
@@ -364,7 +364,9 @@ impl Workspace {
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
         let sync = crate::sync::SyncPage::new(&fleet, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), chat_parked: true, probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
+        // Only the column comes back as it was left: a conversation floating over the page at start is in the way.
+        if !this.settings.chat_docked { this.settings.chat_hidden = true }
         this.apply_appearance(window);
         this.apply_typography(window, cx);
         cx.observe_window_appearance(window, |this, window, _| this.apply_appearance(window)).detach();
@@ -579,6 +581,7 @@ impl Workspace {
             Cmd::SetPage(page) => {
                 if page == Page::Assistant && self.page != Page::Assistant { self.chat.back = self.page }
                 self.page = page;
+                self.chat.history = false;
                 if page == Page::Assistant { self.enter_assistant(window, cx) }
                 if matches!(page, Page::Audit | Page::Overview | Page::Tasks | Page::LongJobs | Page::Security) { self.reload(cx) }
                 if page == Page::Disk { self.load_disk(cx) }
@@ -589,11 +592,14 @@ impl Workspace {
             }
             // On the assistant's own page there is no panel to fold: the shortcut goes back to the page it came from.
             Cmd::ToggleChat if self.page == Page::Assistant => self.run(Cmd::SetPage(self.chat.back), window, cx),
-            // Parked for want of a model, the panel is closed whatever the setting says: the first press opens it.
-            Cmd::ToggleChat if self.chat_closed() && !self.settings.chat_hidden => self.chat_parked = false,
             Cmd::ToggleChat => {
-                self.chat_parked = false;
                 self.settings.chat_hidden = !self.settings.chat_hidden;
+                self.save_settings(cx);
+                if !self.settings.chat_hidden { self.focus_composer(window, cx) }
+            }
+            Cmd::DockChat(docked) => {
+                self.settings.chat_docked = docked;
+                self.settings.chat_hidden = false;
                 self.save_settings(cx);
             }
             Cmd::Ask => self.ask(cx),
@@ -609,7 +615,7 @@ impl Workspace {
             }
             Cmd::Draft(text) => {
                 self.show_chat(cx);
-                self.chat.history = None;
+                self.chat.history = false;
                 self.chat.input.update(cx, |input, cx| {
                     input.set_text(&text, cx);
                     input.focus(window);
@@ -617,7 +623,7 @@ impl Workspace {
             }
             Cmd::FocusChat => {
                 self.show_chat(cx);
-                self.chat.history = None;
+                self.chat.history = false;
                 self.chat.input.update(cx, |input, _| input.focus(window));
             }
             Cmd::PickSlash(at) => self.pick_slash(at, cx),
@@ -633,7 +639,12 @@ impl Workspace {
                 if !self.chat.tools_open.remove(&first) { self.chat.tools_open.insert(first); }
             }
             Cmd::ShowOutput(at) => self.show_output(at, window, cx),
-            Cmd::ToggleHistory => self.toggle_history(cx),
+            Cmd::ToggleHistory => {
+                let listing = self.page != Page::Assistant || !self.chat.history;
+                if self.page != Page::Assistant { self.run(Cmd::SetPage(Page::Assistant), window, cx) }
+                self.chat.history = listing;
+                if listing { self.chat.search.update(cx, |input, _| input.focus(window)) } else { self.focus_composer(window, cx) }
+            }
             Cmd::OpenChat(id) => {
                 self.open_chat(&id, cx);
                 if self.page == Page::Assistant { self.focus_composer(window, cx) }
@@ -716,9 +727,13 @@ impl Workspace {
         if self.menu.take().is_some() {
         } else if self.modal.is_some() {
             self.close_modal(window, cx);
-        } else if self.chat.history.take().is_some() {
+        } else if std::mem::take(&mut self.chat.history) {
+            self.focus_composer(window, cx);
         } else if self.chat.busy && self.chat.input.focus_handle(cx).is_focused(window) {
             self.stop_chat(cx);
+        } else if self.chat_floating() {
+            self.settings.chat_hidden = true;
+            self.save_settings(cx);
         }
         cx.notify();
     }
@@ -742,27 +757,27 @@ impl Workspace {
         if let Some(start) = start { window.focus(&start) }
     }
 
-    /// Bring the panel back, unless the assistant's own page is open: there the conversation is on show already.
+    /// Bring the assistant back, floating or as a column, unless its own page is open: there the conversation is on show already.
     pub fn show_chat(&mut self, cx: &mut Context<Self>) {
-        self.chat_parked = false;
         if self.settings.chat_hidden && self.page != Page::Assistant {
             self.settings.chat_hidden = false;
             self.save_settings(cx);
         }
     }
 
-    /// Whether a model is set up that the assistant could ask: one with a key.
-    pub fn chat_configured(&self) -> bool {
-        self.settings.chat_profile().is_some_and(|profile| !profile.key().is_empty())
+    /// Whether the assistant stands beside the page as a column: the page is that much narrower.
+    pub fn chat_docked(&self) -> bool {
+        !self.settings.chat_hidden && self.settings.chat_docked && self.page != Page::Assistant
     }
 
-    /// Whether the assistant's panel is folded away: by choice, or parked until there is a model to talk to.
-    pub fn chat_closed(&self) -> bool {
-        self.settings.chat_hidden || (self.chat_parked && !self.chat_configured())
+    /// Whether the assistant floats over the page, at the bottom right.
+    pub fn chat_floating(&self) -> bool {
+        !self.settings.chat_hidden && !self.settings.chat_docked && self.page != Page::Assistant
     }
 
+    /// How wide the assistant is drawn: the column as the reader left it, the floating one fixed.
     pub fn chat_width(&self) -> f32 {
-        if self.settings.chat_width > 0. { self.settings.chat_width } else { 440. }
+        if !self.settings.chat_docked { FLOAT_W } else if self.settings.chat_width > 0. { self.settings.chat_width } else { 440. }
     }
 
     fn drag_chat(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -779,6 +794,9 @@ impl Workspace {
 }
 
 pub const SIDEBAR_W: f32 = 208.;
+/// The floating assistant: its width, and how far it and its button stand from the window's corner.
+const FLOAT_W: f32 = 420.;
+const FLOAT_GAP: f32 = 20.;
 
 fn bind_keys(cx: &mut App) {
     cx.clear_key_bindings();
@@ -811,9 +829,12 @@ impl Render for Workspace {
             Page::Assistant => self.render_assistant(window, cx),
             Page::Settings => self.render_settings(window, cx),
         };
-        // The assistant's page draws the conversation itself: the panel (and its edge) is left out, whatever `chat_hidden` says.
-        let chat_shown = !self.chat_closed() && self.page != Page::Assistant;
-        let chat = chat_shown.then(|| self.render_chat(window, cx));
+        // The assistant's page draws the conversation itself: there is no column, no floating one and no button, whatever the settings say.
+        let docked = self.chat_docked();
+        let chat = (docked || self.chat_floating()).then(|| self.render_chat(window, cx));
+        let (chat, float) = if docked { (chat, None) } else { (None, chat) };
+        let float_height = (f32::from(window.viewport_size().height) - 2. * FLOAT_GAP - ui::strip_h()).clamp(280., 640.);
+        let button = (self.settings.chat_hidden && self.page != Page::Assistant).then(|| self.render_chat_button(cx));
         let chat_width = self.chat_width();
         div()
             .id("workspace")
@@ -862,6 +883,9 @@ impl Render for Workspace {
                         )
                     }),
             )
+            // Floating: a card over the page's corner, which the page under it does not hear through.
+            .children(float.map(|chat| div().id("chat-float").absolute().right(px(FLOAT_GAP)).bottom(px(FLOAT_GAP)).flex().flex_col().w(px(FLOAT_W)).h(px(float_height)).rounded(px(14.)).border_1().border_color(Theme::line_strong()).bg(Theme::bg_body()).shadow(theme::shadow_panel()).overflow_hidden().occlude().child(chat)))
+            .children(button)
             .children(self.render_modal(window, cx))
             .children(self.render_menu(cx))
             .children(self.render_toast())
@@ -943,6 +967,35 @@ impl Workspace {
             )
     }
 
+    /// The assistant put away: a round button at the bottom right, where it floats when opened.
+    /// It turns while the assistant works, and carries a dot while a consent card waits.
+    fn render_chat_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chat = &self.chat;
+        div()
+            .id("chat-button")
+            .absolute()
+            .right(px(FLOAT_GAP))
+            .bottom(px(FLOAT_GAP))
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(44.))
+            .rounded(px(22.))
+            .border_1()
+            .border_color(Theme::line_strong())
+            .bg(Theme::bg_body())
+            .shadow(theme::shadow_panel())
+            .cursor_pointer()
+            .occlude()
+            .hover(|s| s.bg(Theme::bg_sunken()))
+            .active(|s| s.bg(Theme::pressed()))
+            .tooltip(ui::tip(t("打开助手")))
+            .on_click(self.on(Cmd::FocusChat, cx))
+            .child(if chat.busy && chat.pending.is_none() { ui::spinner("chat-button-working", 18., Theme::accent()).into_any_element() } else { ui::icon("message-square", 18., Theme::accent()).into_any_element() })
+            .when(chat.pending.is_some(), |d| d.child(div().absolute().top(px(1.)).right(px(1.)).size(px(10.)).rounded(px(5.)).border_2().border_color(Theme::bg_body()).bg(Theme::warning())))
+            .into_any_element()
+    }
+
     fn render_menu(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let menu = self.menu.as_ref()?;
         let mut rows: Vec<AnyElement> = vec![];
@@ -987,14 +1040,12 @@ impl Workspace {
     }
 
     /// A page's header: its title, a line of what it is, and its actions at the right.
-    /// With the assistant folded away, the way back to it stands last, where its panel's head was.
-    pub fn page_head(&self, title: &str, about: impl Into<SharedString>, actions: Vec<AnyElement>, cx: &mut Context<Self>) -> Div {
+    pub fn page_head(&self, title: &str, about: impl Into<SharedString>, actions: Vec<AnyElement>, _: &mut Context<Self>) -> Div {
         ui::column_head()
             .px(px(24.))
             .gap(px(8.))
             .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().text_size(text_px(ui::HEAD_TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string())).child(div().truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_tertiary()).child(about.into())))
             .children(actions)
-            .when(self.chat_closed() && self.page != Page::Assistant, |d| d.child(ui::ghost_button("open-assistant", Some("message-square"), Some(t("助手").into())).tooltip(ui::tip(t("打开助手"))).on_click(self.on(Cmd::FocusChat, cx))))
     }
 }
 
@@ -1040,6 +1091,8 @@ impl Workspace {
             "host" => self.run(Cmd::SelectHost(Some(arg.to_string())), window, cx),
             "open" => self.run(Cmd::OpenHost(arg.to_string()), window, cx),
             "chat" => self.settings.chat_hidden = arg == "off",
+            // `dock:on` stands the assistant beside the pages, `dock:off` floats it.
+            "dock" => self.run(Cmd::DockChat(arg != "off"), window, cx),
             "dark" => {
                 self.settings.appearance = "dark".into();
                 self.apply_appearance(window);

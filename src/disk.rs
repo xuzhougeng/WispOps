@@ -397,7 +397,7 @@ impl Workspace {
             self.render_disk_list(scan, current, free, cx)
         } else {
             let viewport = window.viewport_size();
-            let chat = if self.chat_closed() { 0. } else { self.chat_width() + 1. };
+            let chat = if self.chat_docked() { self.chat_width() + 1. } else { 0. };
             let width = (f32::from(viewport.width) - SIDEBAR_W - HOSTS_W - chat - 51.).max(260.);
             let height = (f32::from(viewport.height) - 420.).clamp(280., 620.);
             let blocks = blocks_of(current, MAX_BLOCKS, Some, free);

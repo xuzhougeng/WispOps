@@ -54,7 +54,7 @@ impl Workspace {
                 .into_any_element();
         }
         // The page's own width: the window less the sidebar and the assistant.
-        let inner = f32::from(window.viewport_size().width) - SIDEBAR_W - if self.chat_closed() { 0. } else { self.chat_width() } - 122.;
+        let inner = f32::from(window.viewport_size().width) - SIDEBAR_W - if self.chat_docked() { self.chat_width() } else { 0. } - 122.;
         let room = Room { squares: if inner >= 900. { RUNS_SHOWN } else if inner >= 600. { 12 } else { 0 }, memory: inner >= 600., load: inner >= 750. };
 
         let total = hosts.len().max(1) as f32;
