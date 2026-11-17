@@ -241,6 +241,14 @@ pub struct HostDraft {
     pub description: String,
 }
 
+/// How a server being added logs in: with this computer's keys, a password written with it
+/// (kept in the vault under `name`), or a credential the vault already holds. `sudo` uses the same for sudo.
+pub enum NewLogin {
+    Key,
+    Password { name: String, password: String, sudo: bool },
+    Credential { name: String, sudo: bool },
+}
+
 #[derive(Default)]
 pub struct View {
     pub hosts: Vec<HostView>,
@@ -837,6 +845,29 @@ impl Fleet {
         })
     }
 
+    /// A new server together with how it logs in, so its first probe does not fail for want of a
+    /// password. One step as the window sees it: when the credential cannot be stored or linked,
+    /// the server is taken back out and the form can be sent again.
+    pub fn add_host(&self, draft: HostDraft, login: NewLogin) -> Result<(), String> {
+        let host = draft.name.clone();
+        // Checked before anything is written.
+        match &login {
+            NewLogin::Password { password, .. } if password.is_empty() => return Err("填写密码。".into()),
+            NewLogin::Credential { name, .. } if !self.vault.list()?.entries.iter().any(|entry| &entry.name == name) => return Err(format!("密码库里没有凭据 {name}。")),
+            _ => {}
+        }
+        self.save_host(None, draft)?;
+        let linked = match &login {
+            NewLogin::Key => Ok(()),
+            NewLogin::Password { name, password, sudo } => {
+                // The login is the server's own user's; the user name stays empty, so as a sudo credential it names no other account.
+                self.create_and_bind(&host, false, name, "", password, "", true).and_then(|()| if *sudo { self.bind_credential(&host, true, name).inspect_err(|_| _ = self.delete_credential(name)) } else { Ok(()) })
+            }
+            NewLogin::Credential { name, sudo } => self.bind_credential(&host, false, name).and_then(|()| if *sudo { self.bind_credential(&host, true, name) } else { Ok(()) }),
+        };
+        linked.inspect_err(|_| _ = self.remove_host(&host))
+    }
+
     pub fn remove_host(&self, name: &str) -> Result<(), String> {
         self.edit_managed(|state| {
             state.hosts.retain(|host| host.name != name);
@@ -1297,7 +1328,7 @@ pub fn skills(settings_file: &Path) -> Vec<wisp_ops_core::skill::Skill> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fleet, HostDraft};
+    use super::{Fleet, HostDraft, NewLogin};
     use wisp_ops_engine::config::AuthMethod;
 
     fn fleet(tag: &str) -> (Fleet, std::path::PathBuf) {
@@ -1310,6 +1341,27 @@ mod tests {
 
     fn names(fleet: &Fleet) -> Vec<String> {
         fleet.vault.list().unwrap().entries.into_iter().map(|entry| entry.name).collect()
+    }
+
+    #[test]
+    fn a_server_is_added_with_its_login() {
+        let (fleet, root) = fleet("add-login");
+        let draft = |name: &str| HostDraft { name: name.into(), ssh: "10.0.0.10".into(), user: "ops".into(), ..Default::default() };
+        fleet.add_host(draft("web"), NewLogin::Password { name: "web-ops".into(), password: "s3cret".into(), sudo: true }).unwrap();
+        let host = fleet.inventory().host("web").cloned().unwrap();
+        assert_eq!((host.auth, host.login_secret.as_deref(), host.sudo_secret.as_deref()), (Some(AuthMethod::Password), Some("local:web-ops"), Some("local:web-ops")));
+        fleet.add_host(draft("db"), NewLogin::Credential { name: "web-ops".into(), sudo: false }).unwrap();
+        let host = fleet.inventory().host("db").cloned().unwrap();
+        assert_eq!((host.login_secret.as_deref(), host.sudo_secret), (Some("local:web-ops"), None));
+        fleet.add_host(draft("key"), NewLogin::Key).unwrap();
+        assert_eq!(fleet.inventory().host("key").and_then(|host| host.login_secret.clone()), None);
+        // No password, a credential name already taken, one the vault does not hold: no server is left behind.
+        assert!(fleet.add_host(draft("a"), NewLogin::Password { name: "a-ops".into(), password: String::new(), sudo: false }).is_err());
+        assert!(fleet.add_host(draft("a"), NewLogin::Password { name: "web-ops".into(), password: "x".into(), sudo: false }).is_err());
+        assert!(fleet.add_host(draft("a"), NewLogin::Credential { name: "gone".into(), sudo: false }).is_err());
+        assert!(!fleet.inventory().has_host("a"));
+        assert_eq!(names(&fleet), ["web-ops"]);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

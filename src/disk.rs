@@ -280,6 +280,7 @@ impl Workspace {
                 .when(active, |d| d.bg(Theme::accent_soft()).font_weight(FontWeight::MEDIUM))
                 .hover(|s| s.bg(Theme::hover()))
                 .on_click(self.on(Cmd::DiskHost(host.name.clone()), cx))
+                .on_mouse_down(MouseButton::Right, self.on_context(MenuKind::DiskHost(host.name.clone()), cx))
                 .child(if self.disk.scanning.contains(&host.name) { ui::spinner(SharedString::from(format!("disk-scanning-{}", host.name)), 12., Theme::accent()).into_any_element() } else { div().flex_none().size(px(8.)).m(px(2.)).rounded_full().bg(colour).into_any_element() })
                 .child(div().flex_1().min_w_0().truncate().child(host.name.clone()))
                 .children(fullest.filter(|_| host.blocked_until.is_none()).map(|pct| div().flex_none().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(format!("{pct:.0}%"))))

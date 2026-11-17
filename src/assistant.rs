@@ -3,7 +3,8 @@
 //! (`chat.history`): newest first, by day, filtered by title, each opened or
 //! deleted there. There is one conversation and one composer, so while this
 //! page is open the assistant beside the pages (floating or as a column) is
-//! not drawn; leaving the page brings it back as it was. The list is read
+//! not drawn; going back to the page it was opened over brings it back as it
+//! was (over any other page the floating one is put away). The list is read
 //! from disk when the page is entered and after a conversation is saved,
 //! opened or deleted (`Workspace::relist`), never while drawing.
 

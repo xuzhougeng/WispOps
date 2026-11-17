@@ -139,6 +139,10 @@ pub enum Cmd {
     /// In the bind dialog: write a new credential, stored and linked by 保存.
     BindNewCredential,
     TestCredential,
+    /// In the dialog of a new server: how it logs in (`key`, `password`, `vault`), the credential picked, sudo with the same.
+    HostLogin(&'static str),
+    HostPick(String),
+    HostSudoToo,
     HostSearchChanged,
     // ---- overview
     SelectRun(String, usize),
@@ -254,6 +258,10 @@ pub enum MenuKind {
     AddProvider,
     Effort(usize, usize),
     HostActions(String),
+    /// A server on the 磁盘 page: its scans.
+    DiskHost(String),
+    /// A server on the 安全 page: its triage.
+    AttackHost(String),
     AutoInspect,
     DiskScan,
     LongHours,
@@ -553,6 +561,33 @@ impl Workspace {
                     items.push(item(t("删除服务器"), false, None, Cmd::RemoveHost(name)));
                 }
             }
+            MenuKind::DiskHost(name) => {
+                use crate::scans::Scope;
+                // A scan under way is not started again; a follow-up scan wants a first one to follow.
+                if !self.disk.scanning.contains(&name) {
+                    if self.fleet.disk_plans().contains_key(&name) { items.push(item(t("增量扫描"), false, None, Cmd::DiskScan(name.clone(), Scope::Again))) }
+                    items.push(item(t("扫描用户目录"), false, None, Cmd::DiskScan(name.clone(), Scope::Home)));
+                    items.push(item(t("全盘扫描（root）"), false, None, Cmd::AskFullScan(name.clone())));
+                    breaks.push(items.len());
+                }
+                items.push(item(t("让助手诊断磁盘"), false, None, Cmd::Draft(format!("/disk {name} /"))));
+                breaks.push(items.len());
+                items.push(item(t("查看详情"), false, None, Cmd::SelectHost(Some(name.clone()))));
+                items.push(item(t("查看操作审计"), false, None, Cmd::AuditHost(Some(name))));
+            }
+            MenuKind::AttackHost(name) => {
+                if !self.attack_working.contains(&name) {
+                    items.push(item(t("立即排查"), false, None, Cmd::ScanAttacks(name.clone())));
+                    items.push(item(t("巡检"), false, None, Cmd::InspectHosts(name.clone())));
+                    breaks.push(items.len());
+                }
+                items.push(item(t("让助手做安全排查"), false, None, Cmd::Suggest(format!("/security {name}"))));
+                breaks.push(items.len());
+                items.push(item(t("查看详情"), false, None, Cmd::SelectHost(Some(name.clone()))));
+                items.push(item(t("查看操作审计"), false, None, Cmd::AuditHost(Some(name.clone()))));
+                breaks.push(items.len());
+                items.push(item(t("配置 sudoer…"), false, None, Cmd::BindCredential(name, true)));
+            }
             MenuKind::AutoInspect => {
                 for minutes in wisp_ops_core::settings::AUTO_INSPECT {
                     items.push(item(&crate::settings::interval_label(minutes), self.settings.auto_inspect_minutes == minutes, None, Cmd::SetAutoInspect(minutes)));
@@ -577,6 +612,7 @@ impl Workspace {
 
     pub fn run(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
+        let from = self.page;
         match cmd {
             Cmd::SetPage(page) => {
                 if page == Page::Assistant && self.page != Page::Assistant { self.chat.back = self.page }
@@ -592,10 +628,13 @@ impl Workspace {
             }
             // On the assistant's own page there is no panel to fold: the shortcut goes back to the page it came from.
             Cmd::ToggleChat if self.page == Page::Assistant => self.run(Cmd::SetPage(self.chat.back), window, cx),
+            Cmd::ToggleChat if self.settings.chat_hidden => {
+                self.show_chat(cx);
+                self.focus_composer(window, cx);
+            }
             Cmd::ToggleChat => {
-                self.settings.chat_hidden = !self.settings.chat_hidden;
+                self.settings.chat_hidden = true;
                 self.save_settings(cx);
-                if !self.settings.chat_hidden { self.focus_composer(window, cx) }
             }
             Cmd::DockChat(docked) => {
                 self.settings.chat_docked = docked;
@@ -667,7 +706,7 @@ impl Workspace {
                 self.modal = None;
                 self.run_confirmed(*cmd, window, cx);
             }
-            cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ToggleImportAll(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::BindNewCredential | Cmd::TestCredential | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
+            cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ToggleImportAll(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::BindNewCredential | Cmd::TestCredential | Cmd::HostLogin(_) | Cmd::HostPick(_) | Cmd::HostSudoToo | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
             cmd @ (Cmd::DiskHost(_) | Cmd::AskFullScan(_) | Cmd::DiskScan(..) | Cmd::DiskPath(_) | Cmd::DiskZoom(_) | Cmd::DiskList(_) | Cmd::ToggleDiskFree) => self.run_disk(cmd, cx),
             Cmd::CheckLongJobs(selector) => self.check_long_jobs(selector, false, cx),
             cmd @ (Cmd::ToggleLongHost(_) | Cmd::FoldLongHosts(_) | Cmd::LongUser(..) | Cmd::LongFilter(..)) => self.run_longrun(cmd, cx),
@@ -698,7 +737,16 @@ impl Workspace {
             cmd @ (Cmd::AddWebhook | Cmd::EditWebhook(_) | Cmd::RemoveWebhook(_) | Cmd::DropWebhook(_) | Cmd::TestWebhook(_) | Cmd::PickWebhookKind(_) | Cmd::ToggleWebhookEvent(_) | Cmd::SetWebhookTasks(_)) => self.run_webhooks(cmd, cx),
             cmd => self.run_settings(cmd, window, cx),
         }
+        if self.page != from { self.page_changed() }
         cx.notify();
+    }
+
+    /// Another page is on show. The floating assistant was opened over the page left and is put
+    /// away (its button stays, turning while it works); the column stands beside every page and
+    /// goes along. The assistant's own page shows the same conversation, so coming back from it changes nothing.
+    fn page_changed(&mut self) {
+        if self.page == Page::Assistant || self.settings.chat_hidden || self.chat.page == self.page { return }
+        if self.settings.chat_docked { self.chat.page = self.page } else { self.settings.chat_hidden = true }
     }
 
     /// What a confirmation dialog stood before.
@@ -758,11 +806,16 @@ impl Workspace {
     }
 
     /// Bring the assistant back, floating or as a column, unless its own page is open: there the conversation is on show already.
+    /// Opened over another page than the conversation was, it starts a new one (the old is among the kept ones);
+    /// one still at work, or waiting for consent, is shown as it is rather than stopped.
     pub fn show_chat(&mut self, cx: &mut Context<Self>) {
-        if self.settings.chat_hidden && self.page != Page::Assistant {
-            self.settings.chat_hidden = false;
-            self.save_settings(cx);
+        if !self.settings.chat_hidden || self.page == Page::Assistant { return }
+        if self.chat.page != self.page {
+            self.chat.page = self.page;
+            if !self.chat.busy && self.chat.pending.is_none() && !self.chat.messages.is_empty() { self.new_chat(cx) }
         }
+        self.settings.chat_hidden = false;
+        self.save_settings(cx);
     }
 
     /// Whether the assistant stands beside the page as a column: the page is that much narrower.
@@ -1108,6 +1161,8 @@ impl Workspace {
             },
             "assistant" => self.run(Cmd::FocusChat, window, cx),
             "toggle-chat" => self.run(Cmd::ToggleChat, window, cx),
+            "disk-menu" => self.open_menu(MenuKind::DiskHost(arg.to_string()), point(px(420.), px(220.)), cx),
+            "attack-menu" => self.open_menu(MenuKind::AttackHost(arg.to_string()), point(px(520.), px(260.)), cx),
             "host-menu" => self.open_menu(MenuKind::HostActions(arg.to_string()), point(px(520.), px(260.)), cx),
             "consent" => self.run(Cmd::AnswerTools(match arg { "deny" => Consent::Deny, "grant" => Consent::Grant, "full" => Consent::Full, _ => Consent::Once }), window, cx),
             "inspect" => self.run(Cmd::InspectHosts(arg.to_string()), window, cx),
@@ -1130,6 +1185,8 @@ impl Workspace {
             "attack-scan" => self.run(Cmd::ScanAttacks(arg.to_string()), window, cx),
             "open-attack" => self.run(Cmd::OpenAttack(arg.to_string()), window, cx),
             "add-host" => self.run(Cmd::AddHost, window, cx),
+            // In the dialog of a new server: `host-login:password`, `host-login:vault`.
+            "host-login" => self.run(Cmd::HostLogin(match arg { "password" => "password", "vault" => "vault", _ => "key" }), window, cx),
             // The import dialog, a tick on its nth row, and a capability probe: `import`, `toggle-import:0`, `probe:all`.
             "import" => self.run(Cmd::ImportSshConfig, window, cx),
             "toggle-import" => self.run(Cmd::ToggleImport(arg.parse().unwrap_or(0)), window, cx),
