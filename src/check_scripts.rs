@@ -118,6 +118,8 @@ mod tests {
         TaskDraft { name: name.into(), targets: "web-01,web-02".into(), playbook: "script".into(), script: script.into(), schedule: "manual".into(), daily: "08:30".into(), every_minutes: 60, ..Default::default() }
     }
 
+    // The fake ssh is a shell script.
+    #[cfg(unix)]
     #[test]
     fn a_drafted_script_runs_only_after_a_person_accepts_it() {
         let (fleet, root) = fleet("flow");

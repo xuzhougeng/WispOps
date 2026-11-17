@@ -1,15 +1,20 @@
-<!-- 本项目绘制: Wisp Science's three wisps (its tile, teal and arc paths, unchanged) around a
-     shell prompt in ink. The tile leaves a 10% transparent margin on each side, as macOS icons do;
-     the .ico is rendered from the same drawing with viewBox="-4 -4 136 136". -->
+<!-- 本项目绘制: three servers in ink with their lamps lit, one linked out to a node, in
+     Wisp Science's colours (its tile, its teal, the node and link of its wordmark). The tile leaves
+     a 10% transparent margin on each side, as macOS icons do; the .ico is rendered from the same
+     drawing with viewBox="-4 -4 136 136". `app-mark.svg` is the same picture for small sizes. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-16 -16 160 160">
   <rect width="128" height="128" rx="26" fill="#FAF9F6"/>
-  <!-- the wisps -->
-  <g fill="#0D9488" transform="translate(60.93 64) scale(1.04)">
-    <path d="M-38.105118 -22A44 44 0 1 1 -38.105118 22A39.40877 39.40877 0 1 0 -38.105118 -22Z"/>
-    <path d="M28.197787 -16.28A32.56 32.56 0 1 1 0 -32.56A29.16249 29.16249 0 1 0 28.197787 -16.28Z"/>
-    <path d="M0 24.0944A24.0944 24.0944 0 1 1 20.866362 12.0472A21.580242 21.580242 0 1 0 0 24.0944Z"/>
-  </g>
-  <!-- the prompt -->
-  <path d="M52 54l11 10-11 10" fill="none" stroke="#1C1C1C" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M67 75h10" stroke="#1C1C1C" stroke-width="5" stroke-linecap="round"/>
+  <!-- the servers -->
+  <rect x="24" y="31" width="62" height="19" rx="6.5" fill="none" stroke="#1C1C1C" stroke-width="3.6"/>
+  <circle cx="35.5" cy="40.5" r="3.4" fill="#0D9488"/>
+  <path d="M62 40.5h13" stroke="#1C1C1C" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
+  <rect x="24" y="54.5" width="62" height="19" rx="6.5" fill="none" stroke="#1C1C1C" stroke-width="3.6"/>
+  <circle cx="35.5" cy="64.0" r="3.4" fill="#0D9488"/>
+  <path d="M62 64.0h13" stroke="#1C1C1C" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
+  <rect x="24" y="78" width="62" height="19" rx="6.5" fill="none" stroke="#1C1C1C" stroke-width="3.6"/>
+  <circle cx="35.5" cy="87.5" r="3.4" fill="#0D9488"/>
+  <path d="M62 87.5h13" stroke="#1C1C1C" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
+  <!-- the node -->
+  <path d="M86 40.5L99.8 29.1" stroke="#0D9488" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="106" cy="24" r="8" fill="#FAF9F6" stroke="#0D9488" stroke-width="2.6"/>
 </svg>
