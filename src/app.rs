@@ -106,6 +106,13 @@ pub enum Cmd {
     DockChat(bool),
     Ask,
     StopChat,
+    /// Go back to the request at this place of the conversation: it and what followed leave, its text goes back in the box.
+    Rewind(usize),
+    /// The next queued request, sent by hand once an answer failed or was stopped.
+    SendQueued,
+    /// A queued request back in the box; or out of the queue.
+    EditQueued(usize),
+    DropQueued(usize),
     NewChat,
     Suggest(String),
     /// Put a request in the box for the person to finish.
@@ -713,6 +720,10 @@ impl Workspace {
             }
             Cmd::Ask => self.ask(cx),
             Cmd::StopChat => self.stop_chat(cx),
+            Cmd::Rewind(at) => self.rewind(at, window, cx),
+            Cmd::SendQueued => self.send_queued(cx),
+            Cmd::EditQueued(at) => self.edit_queued(at, window, cx),
+            Cmd::DropQueued(at) => self.drop_queued(at, cx),
             Cmd::NewChat => {
                 self.new_chat(cx);
                 if self.page == Page::Assistant { self.focus_composer(window, cx) }
@@ -746,7 +757,7 @@ impl Workspace {
                 cx,
             ),
             Cmd::ToggleTools(first) => {
-                if !self.chat.tools_open.remove(&first) { self.chat.tools_open.insert(first); }
+                if !self.chat.current.tools_open.remove(&first) { self.chat.current.tools_open.insert(first); }
             }
             Cmd::ShowOutput(at) => self.show_output(at, window, cx),
             Cmd::ToggleHistory => {
@@ -761,7 +772,7 @@ impl Workspace {
             }
             Cmd::DeleteChat(id) => self.delete_chat(&id, cx),
             Cmd::RevokeGrants => {
-                self.fleet.revoke_grants(&self.chat.session);
+                self.fleet.revoke_grants(&self.chat.current.session);
                 self.say(t("已撤销这次对话的全部授权"), cx);
             }
             Cmd::CopyText(text) => {
@@ -850,7 +861,7 @@ impl Workspace {
             self.close_modal(window, cx);
         } else if std::mem::take(&mut self.chat.history) {
             self.focus_composer(window, cx);
-        } else if self.chat.busy && self.chat.input.focus_handle(cx).is_focused(window) {
+        } else if self.chat.current.busy && self.chat.input.focus_handle(cx).is_focused(window) {
             self.stop_chat(cx);
         } else if self.chat_floating() {
             self.settings.chat_hidden = true;
@@ -885,7 +896,7 @@ impl Workspace {
         if !self.settings.chat_hidden || self.page == Page::Assistant { return }
         if self.chat.page != self.page {
             self.chat.page = self.page;
-            if !self.chat.busy && self.chat.pending.is_none() && !self.chat.messages.is_empty() { self.new_chat(cx) }
+            if !self.chat.current.busy && self.chat.current.pending.is_none() && !self.chat.current.messages.is_empty() { self.new_chat(cx) }
         }
         self.settings.chat_hidden = false;
         self.save_settings(cx);
@@ -1132,8 +1143,8 @@ impl Workspace {
             .active(|s| s.bg(Theme::pressed()))
             .tooltip(ui::tip(t("打开助手")))
             .on_click(self.on(Cmd::FocusChat, cx))
-            .child(if chat.busy && chat.pending.is_none() { ui::spinner("chat-button-working", 18., Theme::accent()).into_any_element() } else { ui::icon("message-square", 18., Theme::accent()).into_any_element() })
-            .when(chat.pending.is_some(), |d| d.child(div().absolute().top(px(1.)).right(px(1.)).size(px(10.)).rounded(px(5.)).border_2().border_color(Theme::bg_body()).bg(Theme::warning())))
+            .child(if chat.working() && !chat.waiting() { ui::spinner("chat-button-working", 18., Theme::accent()).into_any_element() } else { ui::icon("message-square", 18., Theme::accent()).into_any_element() })
+            .when(chat.waiting(), |d| d.child(div().absolute().top(px(1.)).right(px(1.)).size(px(10.)).rounded(px(5.)).border_2().border_color(Theme::bg_body()).bg(Theme::warning())))
             .into_any_element()
     }
 
@@ -1338,6 +1349,13 @@ impl Workspace {
             // The dialog's button: Enter in a field needs the window to be the active one.
             "submit" => self.run(Cmd::SubmitModal, window, cx),
             "history" => self.run(Cmd::ToggleHistory, window, cx),
+            "new-chat" => self.run(Cmd::NewChat, window, cx),
+            // `rewind:<n>` goes back to the nth request (from 0) of the conversation on show.
+            "rewind" => {
+                let at = self.chat.current.messages.iter().enumerate().filter(|(_, item)| matches!(item, crate::chat::ChatItem::User { .. })).nth(arg.parse().unwrap_or(0)).map(|(at, _)| at);
+                if let Some(at) = at { self.run(Cmd::Rewind(at), window, cx) }
+            }
+            "send-queued" => self.run(Cmd::SendQueued, window, cx),
             "find-chat" => self.chat.search.update(cx, |input, cx| input.set_text(&arg.replace('+', " "), cx)),
             "open-chat" => self.run(Cmd::OpenChat(arg.to_string()), window, cx),
             // Device sync: `sync:fill=<url>|<user>|<password>|<passphrase>`, `sync:push`, `sync:list`, `sync:preview` (the newest), `sync:pull`, `sync:scroll`.

@@ -8,6 +8,12 @@
 //! The steps of one request: `ask` → `chat_step` (the streamed turn) →
 //! `run_tools` (each call settled by the gate) → `execute_tools` (off the
 //! main thread) → `chat_step` again, until a turn ends without calls.
+//!
+//! Each conversation (`Conversation`) runs on its own: starting a new one or
+//! opening a kept one leaves one at work going on behind (`Chat::behind`),
+//! and what arrives for it is found by its key. What is written while an
+//! answer is being given waits in its queue; going back to a request cuts the
+//! conversation, and what the model was sent, back to just before it.
 
 use crate::app::{Cmd, Consent, MenuKind, Page, Workspace};
 use crate::i18n::t;
@@ -61,14 +67,20 @@ pub struct ChatInfo {
     pub requests: usize,
 }
 
-pub struct Chat {
-    pub input: Entity<TextInput>,
+/// One conversation: what was said, and the request being answered. The one on show is
+/// `Chat::current`; one still at work when another is opened goes on behind it
+/// (`Chat::behind`) until it is done, and is found again from the kept conversations.
+pub struct Conversation {
+    /// Which conversation what arrives from a request belongs to: unique for the window's life.
+    pub key: u64,
     pub messages: Vec<ChatItem>,
     /// The conversation as the model's protocol carries it: requests, the
-    /// model's turns as it sent them, tool results. Only ever appended to.
+    /// model's turns as it sent them, tool results. Appended to, and cut back by going back to a request.
     wire: Vec<Value>,
     /// The protocol `wire` is written in.
     protocol: Option<Protocol>,
+    /// Where each request of `messages` starts in `wire`, for going back to it; complete while `protocol` is set.
+    marks: Vec<usize>,
     /// Requests made to the model for the one being answered.
     pub steps: usize,
     /// What the model was told of the fleet, built with the first request.
@@ -78,13 +90,37 @@ pub struct Chat {
     /// Why the last answer ended early, if it did; while one is awaited, what it is waiting for.
     pub note: String,
     pub scroll: ScrollHandle,
-    /// Bumped by 新对话 and by stopping, so what still arrives for the old run is dropped.
+    /// Bumped by stopping, so what still arrives for the old run is dropped.
     pub generation: u64,
     /// The conversation's id on disk; empty until a request was made.
     pub id: String,
     created_at: String,
     /// Whose grants these are: one conversation's, gone with it.
     pub session: String,
+    /// The tool calls waiting for the person's consent.
+    pub pending: Option<PendingTools>,
+    /// The calls running now, which get an answer of their own if the person stops.
+    running: Vec<String>,
+    /// Raised by stopping: the SSH commands in flight are ended.
+    cancel: Arc<AtomicBool>,
+    /// The groups of tool lines (by the place of their first) that are unfolded.
+    pub tools_open: HashSet<usize>,
+    /// When the request being answered was made.
+    pub started: Option<Instant>,
+    /// Requests written while an answer was being given, sent one at a time as answers end.
+    /// An answer that fails, or is stopped, holds them until the person sends the next.
+    pub queue: Vec<String>,
+}
+
+pub struct Chat {
+    pub input: Entity<TextInput>,
+    /// The conversation on show.
+    pub current: Conversation,
+    /// Conversations left while at work, waiting for consent or with requests queued: they go on
+    /// unseen, and are let go once done. One that failed stays, so its error is seen when it is opened.
+    pub behind: Vec<Conversation>,
+    /// The last conversation key handed out.
+    last_key: u64,
     /// Which entry of the list over the box (the slash commands, or the servers after `@`) is picked.
     pub slash: usize,
     /// Escape closed that list; it opens again with the next change to the text.
@@ -100,16 +136,6 @@ pub struct Chat {
     /// The page the conversation was opened over: floating, it is put away when another page is
     /// gone to, and opened there the assistant starts a conversation of that page's own.
     pub page: Page,
-    /// The tool calls waiting for the person's consent.
-    pub pending: Option<PendingTools>,
-    /// The calls running now, which get an answer of their own if the person stops.
-    running: Vec<String>,
-    /// Raised by stopping: the SSH commands in flight are ended.
-    cancel: Arc<AtomicBool>,
-    /// The groups of tool lines (by the place of their first) that are unfolded.
-    pub tools_open: HashSet<usize>,
-    /// When the request being answered was made.
-    pub started: Option<Instant>,
 }
 
 /// The most entries the list after `@` shows: typing more narrows it.
@@ -161,8 +187,49 @@ fn mention_note(text: &str, view: &crate::ops::View) -> String {
     format!("\n\n[Mentioned with @: {}. The request is about these; a server is selected by its bare name, without @.]", parts.join("; "))
 }
 
-fn new_session() -> String {
-    format!("s{:x}", time::now_millis())
+/// A conversation's own grant session: the key keeps two begun in the same millisecond apart.
+fn new_session(key: u64) -> String {
+    format!("s{:x}-{key}", time::now_millis())
+}
+
+impl Conversation {
+    fn new(key: u64) -> Conversation {
+        Conversation { key, messages: vec![], wire: vec![], protocol: None, marks: vec![], steps: 0, ctx: None, busy: false, error: String::new(), note: String::new(), scroll: ScrollHandle::new(), generation: 0, id: String::new(), created_at: String::new(), session: new_session(key), pending: None, running: vec![], cancel: Arc::new(AtomicBool::new(false)), tools_open: Default::default(), started: None, queue: vec![] }
+    }
+
+    /// An answer piece that never got any text leaves no empty line behind.
+    fn drop_empty_answer(&mut self) {
+        if matches!(self.messages.last(), Some(ChatItem::Answer(text)) if text.is_empty()) { self.messages.pop(); }
+    }
+
+    /// The request has been answered, or given up on.
+    fn end_run(&mut self) {
+        self.busy = false;
+        self.started = None;
+        self.pending = None;
+        self.running.clear();
+        self.drop_empty_answer();
+        if self.note.is_empty() && self.error.is_empty() && !matches!(self.messages.last(), Some(ChatItem::Answer(_))) { self.note = t("模型没有返回内容。").into() }
+    }
+
+    /// Nothing is left for it to do: not answering, not waiting for consent, nothing queued, no error unseen.
+    fn done(&self) -> bool {
+        !self.busy && self.pending.is_none() && self.queue.is_empty() && self.error.is_empty()
+    }
+
+    fn transcript(&self) -> Transcript {
+        let items = self
+            .messages
+            .iter()
+            .filter_map(|item| match item {
+                ChatItem::User { text, prompt } => Some(Said::User { text: text.clone(), prompt: prompt.clone() }),
+                ChatItem::Answer(text) if !text.is_empty() => Some(Said::Answer { text: text.clone() }),
+                ChatItem::Answer(_) => None,
+                ChatItem::Tool { call, result, output } => Some(Said::Tool { call: call.clone(), result: result.as_ref().map(|(shown, _)| shown.clone()).unwrap_or_default(), failed: result.as_ref().is_some_and(|(_, failed)| *failed), output: output.clone() }),
+            })
+            .collect();
+        Transcript { id: self.id.clone(), created_at: self.created_at.clone(), updated_at: time::now_iso(), items }
+    }
 }
 
 impl Chat {
@@ -173,7 +240,42 @@ impl Chat {
             input
         });
         let search = cx.new(|cx| TextInput::new("搜索对话", cx));
-        Chat { input, messages: vec![], wire: vec![], protocol: None, steps: 0, ctx: None, busy: false, error: String::new(), note: String::new(), scroll: ScrollHandle::new(), generation: 0, id: String::new(), created_at: String::new(), session: new_session(), slash: 0, slash_closed: false, history: false, conversations: vec![], search, back: Page::Overview, page: Page::Overview, pending: None, running: vec![], cancel: Arc::new(AtomicBool::new(false)), tools_open: Default::default(), started: None }
+        Chat { input, current: Conversation::new(1), behind: vec![], last_key: 1, slash: 0, slash_closed: false, history: false, conversations: vec![], search, back: Page::Overview, page: Page::Overview }
+    }
+
+    /// A new, empty conversation with a key of its own.
+    fn fresh(&mut self) -> Conversation {
+        self.last_key += 1;
+        Conversation::new(self.last_key)
+    }
+
+    /// The conversation `key`, on show or behind; gone once let go.
+    fn find(&mut self, key: u64) -> Option<&mut Conversation> {
+        if self.current.key == key { Some(&mut self.current) } else { self.behind.iter_mut().find(|conversation| conversation.key == key) }
+    }
+
+    fn get(&self, key: u64) -> Option<&Conversation> {
+        if self.current.key == key { Some(&self.current) } else { self.behind.iter().find(|conversation| conversation.key == key) }
+    }
+
+    /// The kept conversation `id` as it is in the window, when it is: on show or behind.
+    pub fn live(&self, id: &str) -> Option<&Conversation> {
+        std::iter::once(&self.current).chain(&self.behind).find(|conversation| !conversation.id.is_empty() && conversation.id == id)
+    }
+
+    /// Some conversation is being answered (not waiting for consent).
+    pub fn working(&self) -> bool {
+        std::iter::once(&self.current).chain(&self.behind).any(|conversation| conversation.busy && conversation.pending.is_none())
+    }
+
+    /// Some conversation waits for the person's consent.
+    pub fn waiting(&self) -> bool {
+        std::iter::once(&self.current).chain(&self.behind).any(|conversation| conversation.pending.is_some())
+    }
+
+    /// The conversations behind that are at work or wait for consent.
+    pub fn behind_at_work(&self) -> usize {
+        self.behind.iter().filter(|conversation| conversation.busy).count()
     }
 
     /// The slash commands to offer for what is in the box right now.
@@ -192,35 +294,6 @@ impl Chat {
         let picked = ai::mention_matches(typed, &entries);
         let mut taken: Vec<Option<Mentionable>> = all.drain(..).map(Some).collect();
         picked.into_iter().take(MENTION_OFFERS).filter_map(|n| taken[n].take()).collect()
-    }
-
-    /// An answer piece that never got any text leaves no empty line behind.
-    fn drop_empty_answer(&mut self) {
-        if matches!(self.messages.last(), Some(ChatItem::Answer(text)) if text.is_empty()) { self.messages.pop(); }
-    }
-
-    /// The request has been answered, or given up on.
-    fn end_run(&mut self) {
-        self.busy = false;
-        self.started = None;
-        self.pending = None;
-        self.running.clear();
-        self.drop_empty_answer();
-        if self.note.is_empty() && self.error.is_empty() && !matches!(self.messages.last(), Some(ChatItem::Answer(_))) { self.note = t("模型没有返回内容。").into() }
-    }
-
-    fn transcript(&self) -> Transcript {
-        let items = self
-            .messages
-            .iter()
-            .filter_map(|item| match item {
-                ChatItem::User { text, prompt } => Some(Said::User { text: text.clone(), prompt: prompt.clone() }),
-                ChatItem::Answer(text) if !text.is_empty() => Some(Said::Answer { text: text.clone() }),
-                ChatItem::Answer(_) => None,
-                ChatItem::Tool { call, result, output } => Some(Said::Tool { call: call.clone(), result: result.as_ref().map(|(shown, _)| shown.clone()).unwrap_or_default(), failed: result.as_ref().is_some_and(|(_, failed)| *failed), output: output.clone() }),
-            })
-            .collect();
-        Transcript { id: self.id.clone(), created_at: self.created_at.clone(), updated_at: time::now_iso(), items }
     }
 }
 
@@ -245,7 +318,7 @@ pub fn list_conversations(fleet: &crate::ops::Fleet) -> Vec<ChatInfo> {
 }
 
 /// How long an answer has been awaited: `8s`, `1m 05s`.
-fn elapsed(chat: &Chat) -> String {
+fn elapsed(chat: &Conversation) -> String {
     let seconds = chat.started.map_or(0, |at| at.elapsed().as_secs());
     if seconds < 60 { format!("{seconds}s") } else { format!("{}m {:02}s", seconds / 60, seconds % 60) }
 }
@@ -325,52 +398,105 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Start a new conversation. The one on show is not stopped: still at work, it goes on behind.
     pub fn new_chat(&mut self, cx: &mut Context<Self>) {
-        if self.chat.busy { self.stop_chat(cx) }
-        // The grants were this conversation's: they end with it.
-        self.fleet.revoke_grants(&self.chat.session);
-        let chat = &mut self.chat;
-        chat.generation += 1;
-        chat.messages.clear();
-        chat.wire.clear();
-        chat.protocol = None;
-        chat.ctx = None;
-        chat.error.clear();
-        chat.note.clear();
-        chat.id.clear();
-        chat.created_at.clear();
-        chat.session = new_session();
-        chat.history = false;
-        chat.pending = None;
-        chat.tools_open.clear();
+        let fresh = self.chat.fresh();
+        let old = std::mem::replace(&mut self.chat.current, fresh);
+        self.put_away(old);
+        self.chat.history = false;
         self.show_chat(cx);
+        self.relist();
         cx.notify();
     }
 
+    /// The conversation on show gives way to another. One at work, waiting for consent or with
+    /// requests queued goes on behind; any other ends here (it is on disk), and its grants with it.
+    fn put_away(&mut self, conversation: Conversation) {
+        if conversation.busy || conversation.pending.is_some() || !conversation.queue.is_empty() { self.chat.behind.push(conversation) } else { self.fleet.revoke_grants(&conversation.session) }
+    }
+
+    /// Let go of the conversations behind that have nothing left to do: they are kept on disk, and their grants end.
+    fn settle(&mut self) {
+        let (done, going): (Vec<Conversation>, Vec<Conversation>) = std::mem::take(&mut self.chat.behind).into_iter().partition(Conversation::done);
+        self.chat.behind = going;
+        for conversation in done {
+            self.fleet.revoke_grants(&conversation.session);
+        }
+    }
+
+    /// The box was sent: the request goes now, or, while an answer is being given, waits in the queue.
     pub fn ask(&mut self, cx: &mut Context<Self>) {
-        let Some(profile) = self.settings.chat_profile() else {
-            self.chat.error = t("还没有配置模型。在「设置 › 模型」里添加一个模型服务。").into();
+        let question = self.chat.input.read(cx).text().trim().to_string();
+        if question.is_empty() { return }
+        self.chat.history = false;
+        let clear = |this: &mut Self, cx: &mut Context<Self>| this.chat.input.update(cx, |input, cx| input.set_text("", cx));
+        if self.chat.current.busy {
+            // `/new` is taken at once (the conversation goes on behind); anything else waits its turn.
+            if matches!(ai::read_input(&question, &self.settings.commands), Ok(ai::Input::NewChat)) {
+                clear(self, cx);
+                return self.new_chat(cx);
+            }
+            self.chat.current.queue.push(question);
+            self.chat.current.scroll.scroll_to_bottom();
+            clear(self, cx);
             return cx.notify();
+        }
+        let key = self.chat.current.key;
+        if self.send(key, question, cx) { clear(self, cx) }
+        cx.notify();
+    }
+
+    /// The next request in the queue of the conversation on show, sent by hand after an answer failed or was stopped.
+    pub fn send_queued(&mut self, cx: &mut Context<Self>) {
+        let chat = &mut self.chat.current;
+        if chat.busy || chat.queue.is_empty() { return }
+        let (key, next) = (chat.key, chat.queue.remove(0));
+        if !self.send(key, next.clone(), cx) && let Some(chat) = self.chat.find(key) { chat.queue.insert(0, next) }
+        cx.notify();
+    }
+
+    /// A queued request back in the box, to be changed and sent again; what the box held stays after it.
+    pub fn edit_queued(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if at >= self.chat.current.queue.len() { return }
+        let queued = self.chat.current.queue.remove(at);
+        self.chat.input.update(cx, |input, cx| {
+            let held = input.text().trim().to_string();
+            input.set_text(&if held.is_empty() { queued } else { format!("{queued}\n{held}") }, cx);
+            input.focus(window);
+        });
+        cx.notify();
+    }
+
+    pub fn drop_queued(&mut self, at: usize, cx: &mut Context<Self>) {
+        if at < self.chat.current.queue.len() { self.chat.current.queue.remove(at); }
+        cx.notify();
+    }
+
+    /// Make `question` the next request of conversation `key`. True when it was taken (made, or
+    /// `/new`), so what it was written in can be emptied; otherwise why not is on the conversation.
+    fn send(&mut self, key: u64, question: String, cx: &mut Context<Self>) -> bool {
+        let shown = key == self.chat.current.key;
+        let profile = self.settings.chat_profile();
+        let input = ai::read_input(&question, &self.settings.commands);
+        let Some(chat) = self.chat.find(key) else { return false };
+        let Some(profile) = profile else {
+            chat.error = t("还没有配置模型。在「设置 › 模型」里添加一个模型服务。").into();
+            return false;
         };
-        let chat = &mut self.chat;
-        let question = chat.input.read(cx).text().trim().to_string();
-        if question.is_empty() || chat.busy { return }
         chat.error.clear();
         chat.note.clear();
-        let prompt = match ai::read_input(&question, &self.settings.commands) {
+        let prompt = match input {
             Ok(ai::Input::Ask(prompt)) => prompt,
             Ok(ai::Input::NewChat) => {
-                chat.input.update(cx, |input, cx| input.set_text("", cx));
-                return self.new_chat(cx);
+                if shown { self.new_chat(cx) }
+                return true;
             }
             Err(err) => {
                 chat.error = err;
-                return cx.notify();
+                return false;
             }
         };
         let prompt = prompt + &mention_note(&question, &self.view);
-        let chat = &mut self.chat;
-        chat.history = false;
         // A changed protocol starts the wire again from the text of what was said:
         // the model's own turns are only valid in the conversation that produced them.
         let replay = chat.ctx.is_none() || chat.protocol != Some(profile.protocol);
@@ -378,16 +504,19 @@ impl Workspace {
             // The fleet as it stands now: what there is, and what each host's policy says.
             self.fleet.refresh();
             self.view = self.fleet.view();
-            self.chat.ctx = Some(tools::context(&self.view, &self.skills_on()));
+            let ctx = tools::context(&self.view, &self.skills_on());
+            if let Some(chat) = self.chat.find(key) { chat.ctx = Some(ctx) }
         }
-        let chat = &mut self.chat;
+        let Some(chat) = self.chat.find(key) else { return false };
         if replay {
             let mut wire: Vec<Value> = vec![];
+            let mut marks = vec![];
             let mut answer = String::new();
             for item in &chat.messages {
                 match item {
                     ChatItem::User { text, prompt } => {
                         if !answer.is_empty() { wire.push(ai::assistant_message(&std::mem::take(&mut answer))) }
+                        marks.push(wire.len());
                         wire.push(ai::user_message(if prompt.is_empty() { text } else { prompt }));
                     }
                     ChatItem::Answer(text) if !text.is_empty() => {
@@ -400,8 +529,10 @@ impl Workspace {
             }
             if !answer.is_empty() { wire.push(ai::assistant_message(&answer)) }
             chat.wire = wire;
+            chat.marks = marks;
             chat.protocol = Some(profile.protocol);
         }
+        chat.marks.push(chat.wire.len());
         chat.wire.push(ai::user_message(&prompt));
         let sent = if prompt == question { String::new() } else { prompt };
         chat.messages.push(ChatItem::User { text: question, prompt: sent });
@@ -412,19 +543,18 @@ impl Workspace {
             chat.created_at = time::now_iso();
             chat.id = format!("c{:x}", time::now_millis());
         }
-        let sent = self.chat_step(cx);
-        let chat = &mut self.chat;
+        let sent = self.chat_step(key, cx);
         if sent {
-            chat.input.update(cx, |input, cx| input.set_text("", cx));
-            self.save_chat(cx);
-            self.tick_elapsed(cx);
-        } else {
-            // Nothing was sent: the request stays in the box, to be made again.
+            self.save_chat(key, cx);
+            self.tick_elapsed(key, cx);
+        } else if let Some(chat) = self.chat.find(key) {
+            // Nothing was sent: the request is given back, to be made again.
             chat.wire.pop();
+            chat.marks.pop();
             chat.messages.pop();
             if chat.messages.is_empty() { chat.ctx = None }
         }
-        cx.notify();
+        sent
     }
 
     /// The skills that are switched on.
@@ -433,14 +563,14 @@ impl Workspace {
     }
 
     /// While an answer is awaited, the seconds beside the turning mark go on.
-    fn tick_elapsed(&mut self, cx: &mut Context<Self>) {
-        let generation = self.chat.generation;
+    fn tick_elapsed(&mut self, key: u64, cx: &mut Context<Self>) {
+        let Some(generation) = self.chat.get(key).map(|chat| chat.generation) else { return };
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
                 let going = this.update(cx, |this, cx| {
                     cx.notify();
-                    this.chat.busy && this.chat.generation == generation
+                    this.chat.get(key).is_some_and(|chat| chat.busy && chat.generation == generation)
                 });
                 if !matches!(going, Ok(true)) { break }
             }
@@ -448,14 +578,14 @@ impl Workspace {
         .detach();
     }
 
-    /// Send the conversation to the model and follow its turn: the text as
+    /// Send conversation `key` to the model and follow its turn: the text as
     /// it arrives, then either the end of the answer or the tools it asked
     /// for. False when the request could not be made.
-    fn chat_step(&mut self, cx: &mut Context<Self>) -> bool {
+    fn chat_step(&mut self, key: u64, cx: &mut Context<Self>) -> bool {
         let Some(profile) = self.settings.chat_profile() else { return false };
         let mut catalog = tools::catalog();
         catalog.extend(wisp_ops_core::skill::tool(&self.skills_on()));
-        let chat = &mut self.chat;
+        let Some(chat) = self.chat.find(key) else { return false };
         let Some(ctx) = chat.ctx.as_ref() else { return false };
         let request = match ai::chat_request(&profile, ctx, &chat.wire, &catalog) {
             Ok(request) => request,
@@ -477,7 +607,7 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 let alive = this.update(cx, |this, cx| {
-                    let chat = &mut this.chat;
+                    let Some(chat) = this.chat.find(key) else { return false };
                     if chat.generation != generation { return false }
                     // Keep following the answer while the reader is at the bottom.
                     let at_bottom = chat.scroll.offset().y <= -chat.scroll.max_offset().height + px(40.);
@@ -520,8 +650,8 @@ impl Workspace {
                     };
                     if at_bottom { chat.scroll.scroll_to_bottom() }
                     let ended = !chat.busy;
-                    if let Some(calls) = calls { this.run_tools(calls, cx) }
-                    if ended { this.save_chat(cx) }
+                    if let Some(calls) = calls { this.run_tools(key, calls, cx) }
+                    if ended { this.finished(key, cx) }
                     cx.notify();
                     more
                 });
@@ -532,14 +662,26 @@ impl Workspace {
         true
     }
 
+    /// A request of conversation `key` has been answered, or has failed: the conversation is kept
+    /// and, unless it failed, the next request in its queue goes. One behind the conversation on
+    /// show that has nothing left to do is let go.
+    fn finished(&mut self, key: u64, cx: &mut Context<Self>) {
+        self.save_chat(key, cx);
+        if let Some(chat) = self.chat.find(key) && !chat.busy && chat.pending.is_none() && chat.error.is_empty() && !chat.queue.is_empty() {
+            let next = chat.queue.remove(0);
+            if !self.send(key, next.clone(), cx) && let Some(chat) = self.chat.find(key) { chat.queue.insert(0, next) }
+        }
+        self.settle();
+    }
+
     /// Settle the tools a turn asked for, show them, and run them: at once
     /// when policy allows (or a grant covers them), after the person's
     /// consent when a host's policy asks. What policy denies is not asked about.
-    fn run_tools(&mut self, calls: Vec<ToolCall>, cx: &mut Context<Self>) {
+    fn run_tools(&mut self, key: u64, calls: Vec<ToolCall>, cx: &mut Context<Self>) {
         // The inventory may have been edited since the last call.
         self.fleet.refresh();
         let skills = self.skills_on();
-        let chat = &mut self.chat;
+        let Some(chat) = self.chat.find(key) else { return };
         let first = chat.messages.len();
         let mut prepared = vec![];
         for call in calls {
@@ -558,19 +700,21 @@ impl Workspace {
             chat.pending = Some(PendingTools { calls: prepared, first });
             return cx.notify();
         }
-        self.execute_tools(prepared, first, true, cx);
+        self.execute_tools(key, prepared, first, true, cx);
     }
 
-    /// The person answered the card: run the calls, or tell the model they were not allowed.
+    /// The person answered the card of the conversation on show: run the calls, or tell the model they were not allowed.
     pub fn answer_tools(&mut self, consent: Consent, cx: &mut Context<Self>) {
-        let Some(pending) = self.chat.pending.take() else { return };
+        let chat = &mut self.chat.current;
+        let Some(pending) = chat.pending.take() else { return };
+        let (key, session) = (chat.key, chat.session.clone());
         if consent == Consent::Grant {
             for call in &pending.calls {
-                if let Gate::Ask(_, ask) = &call.gate { self.fleet.grant(&self.chat.session, ask) }
+                if let Gate::Ask(_, ask) = &call.gate { self.fleet.grant(&session, ask) }
             }
         }
-        if consent == Consent::Full { self.fleet.grant_full(&self.chat.session) }
-        self.execute_tools(pending.calls, pending.first, consent != Consent::Deny, cx);
+        if consent == Consent::Full { self.fleet.grant_full(&session) }
+        self.execute_tools(key, pending.calls, pending.first, consent != Consent::Deny, cx);
     }
 
     /// Run a turn's tools off the main thread, then hand the results to the
@@ -578,8 +722,8 @@ impl Workspace {
     /// turn with a call that changes something runs in the order it was
     /// given. Without the person's consent (`allowed`) the calls that asked
     /// for it are answered with a refusal and the others still run.
-    fn execute_tools(&mut self, calls: Vec<PreparedCall>, first: usize, allowed: bool, cx: &mut Context<Self>) {
-        let chat = &mut self.chat;
+    fn execute_tools(&mut self, key: u64, calls: Vec<PreparedCall>, first: usize, allowed: bool, cx: &mut Context<Self>) {
+        let Some(chat) = self.chat.find(key) else { return };
         let Some(protocol) = chat.protocol else { return };
         let generation = chat.generation;
         chat.running = calls.iter().map(|call| call.id.clone()).collect();
@@ -614,8 +758,7 @@ impl Workspace {
             this.update(cx, |this, cx| {
                 // Whatever the calls did (an inspection, a probe, a change), the pages read it again.
                 this.reload(cx);
-                let chat = &mut this.chat;
-                if chat.generation == generation {
+                if let Some(chat) = this.chat.find(key) && chat.generation == generation {
                     for (n, (_, result)) in done.iter().enumerate() {
                         if let Some(ChatItem::Tool { result: shown, output, .. }) = chat.messages.get_mut(first + n) {
                             *shown = Some((tools::summary(result), result.is_err()));
@@ -628,7 +771,7 @@ impl Workspace {
                     if chat.steps + 1 >= MAX_CHAT_STEPS { results = ai::with_note(protocol, results, ai::LAST_STEP_NOTE) }
                     chat.wire.extend(results);
                     chat.running.clear();
-                    if !this.chat_step(cx) { this.save_chat(cx) }
+                    if !this.chat_step(key, cx) { this.finished(key, cx) }
                 }
                 cx.notify();
             })
@@ -638,12 +781,19 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Stop the answer being given. What still arrives for it is dropped and
-    /// the SSH commands in flight are ended; the conversation stays one that
-    /// can go on: the calls in flight are answered as stopped, and the text
-    /// so far stays as the model's turn.
+    /// Stop the answer being given in the conversation on show.
     pub fn stop_chat(&mut self, cx: &mut Context<Self>) {
-        let chat = &mut self.chat;
+        let key = self.chat.current.key;
+        self.stop(key, cx);
+    }
+
+    /// Stop the answer being given in conversation `key`. What still arrives
+    /// for it is dropped and the SSH commands in flight are ended; the
+    /// conversation stays one that can go on: the calls in flight are
+    /// answered as stopped, and the text so far stays as the model's turn.
+    /// Its queue is held until the person sends the next.
+    fn stop(&mut self, key: u64, cx: &mut Context<Self>) {
+        let Some(chat) = self.chat.find(key) else { return };
         if !chat.busy { return }
         chat.generation += 1;
         chat.cancel.store(true, Ordering::Relaxed);
@@ -664,13 +814,56 @@ impl Workspace {
         }
         chat.note = t("已停止。").into();
         chat.end_run();
-        self.save_chat(cx);
+        self.save_chat(key, cx);
         cx.notify();
     }
 
-    /// Keep the conversation on disk, as it stands.
-    pub fn save_chat(&mut self, cx: &mut Context<Self>) {
-        let chat = &self.chat;
+    /// Go back to the request at `at` of the conversation on show: it and all that came after it
+    /// leave the conversation (an answer still being given is stopped), and its text is put back in
+    /// the box, to be sent again as it was or changed. What the tools did on the servers stays done.
+    pub fn rewind(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ChatItem::User { text, .. }) = self.chat.current.messages.get(at) else { return };
+        let text = text.clone();
+        let key = self.chat.current.key;
+        self.stop(key, cx);
+        let chat = &mut self.chat.current;
+        let request = chat.messages[..at].iter().filter(|item| matches!(item, ChatItem::User { .. })).count();
+        match chat.marks.get(request) {
+            Some(&start) if chat.protocol.is_some() => {
+                chat.wire.truncate(start);
+                chat.marks.truncate(request);
+            }
+            // The wire was not written in this window: the next request writes it again from what is left.
+            _ => {
+                chat.protocol = None;
+                chat.marks.clear();
+            }
+        }
+        chat.messages.truncate(at);
+        chat.tools_open.retain(|first| *first < at);
+        chat.error.clear();
+        chat.note.clear();
+        let emptied = chat.messages.is_empty();
+        if emptied { chat.ctx = None }
+        let id = chat.id.clone();
+        self.chat.history = false;
+        self.chat.input.update(cx, |input, cx| {
+            input.set_text(&text, cx);
+            input.focus(window);
+        });
+        // Back to before its first request, the conversation is not kept until it is spoken in again (under the same id).
+        if emptied {
+            if !id.is_empty() { _ = std::fs::remove_file(conversations_dir(&self.fleet).join(format!("{id}.json"))) }
+            self.relist();
+        } else {
+            self.save_chat(key, cx);
+        }
+        cx.notify();
+    }
+
+    /// Keep conversation `key` on disk, as it stands.
+    fn save_chat(&mut self, key: u64, cx: &mut Context<Self>) {
+        let Some(chat) = self.chat.get(key) else { return };
         if chat.id.is_empty() || !chat.messages.iter().any(|item| matches!(item, ChatItem::User { .. })) { return }
         let dir = conversations_dir(&self.fleet);
         let result = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join(format!("{}.json", chat.id)), serde_json::to_string(&chat.transcript()).unwrap_or_default()));
@@ -683,34 +876,61 @@ impl Workspace {
         if self.page == Page::Assistant { self.chat.conversations = list_conversations(&self.fleet) }
     }
 
-    /// Take up a kept conversation: what was said is shown again, and the
-    /// next request continues it with the fleet as it is now.
+    /// Take up a kept conversation: one still in the window (at work behind the one on show) as it
+    /// is, any other as it was kept, its next request made with the fleet as it is now. The
+    /// conversation on show is not stopped: at work, it goes on behind.
     pub fn open_chat(&mut self, id: &str, cx: &mut Context<Self>) {
-        let path = conversations_dir(&self.fleet).join(format!("{id}.json"));
-        let Some(transcript) = std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str::<Transcript>(&text).ok()) else { return self.fail(t("这次对话读不出来了。"), cx) };
-        self.new_chat(cx);
-        let chat = &mut self.chat;
-        chat.id = transcript.id;
-        chat.created_at = transcript.created_at;
-        chat.messages = transcript
-            .items
-            .into_iter()
-            .map(|item| match item {
-                Said::User { text, prompt } => ChatItem::User { text, prompt },
-                Said::Answer { text } => ChatItem::Answer(text),
-                Said::Tool { call, result, failed, output } => ChatItem::Tool { call, result: Some((result, failed)), output },
-            })
-            .collect();
-        chat.scroll.scroll_to_bottom();
+        self.show_chat(cx);
+        if self.chat.current.id == id {
+            self.chat.history = false;
+            return cx.notify();
+        }
+        let next = if let Some(at) = self.chat.behind.iter().position(|conversation| conversation.id == id) {
+            self.chat.behind.remove(at)
+        } else {
+            let path = conversations_dir(&self.fleet).join(format!("{id}.json"));
+            let Some(transcript) = std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str::<Transcript>(&text).ok()) else { return self.fail(t("这次对话读不出来了。"), cx) };
+            let mut chat = self.chat.fresh();
+            chat.id = transcript.id;
+            chat.created_at = transcript.created_at;
+            chat.messages = transcript
+                .items
+                .into_iter()
+                .map(|item| match item {
+                    Said::User { text, prompt } => ChatItem::User { text, prompt },
+                    Said::Answer { text } => ChatItem::Answer(text),
+                    Said::Tool { call, result, failed, output } => ChatItem::Tool { call, result: Some((result, failed)), output },
+                })
+                .collect();
+            chat
+        };
+        let old = std::mem::replace(&mut self.chat.current, next);
+        self.put_away(old);
+        self.chat.history = false;
+        self.chat.current.scroll.scroll_to_bottom();
         self.relist();
         cx.notify();
     }
 
+    /// Delete a kept conversation; one still at work is stopped first.
     pub fn delete_chat(&mut self, id: &str, cx: &mut Context<Self>) {
-        let _ = std::fs::remove_file(conversations_dir(&self.fleet).join(format!("{id}.json")));
-        // The list stays open: deleting the open conversation starts a new one, which closes it.
+        // The list stays open: deleting the open conversation starts a new one, which would close it.
         let listing = self.chat.history;
-        if self.chat.id == id { self.new_chat(cx) }
+        let gone = if self.chat.current.id == id {
+            let key = self.chat.current.key;
+            self.stop(key, cx);
+            let fresh = self.chat.fresh();
+            Some(std::mem::replace(&mut self.chat.current, fresh))
+        } else if let Some(at) = self.chat.behind.iter().position(|conversation| conversation.id == id) {
+            let key = self.chat.behind[at].key;
+            self.stop(key, cx);
+            Some(self.chat.behind.remove(at))
+        } else {
+            None
+        };
+        if let Some(gone) = gone { self.fleet.revoke_grants(&gone.session) }
+        // After stopping, which keeps what it stopped.
+        let _ = std::fs::remove_file(conversations_dir(&self.fleet).join(format!("{id}.json")));
         self.chat.history = listing;
         self.relist();
         cx.notify();
@@ -718,7 +938,7 @@ impl Workspace {
 
     /// What a tool returned, in full, in a dialog: the evidence behind a line of the conversation.
     pub fn show_output(&mut self, at: usize, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(ChatItem::Tool { call, output, .. }) = self.chat.messages.get(at) else { return };
+        let Some(ChatItem::Tool { call, output, .. }) = self.chat.current.messages.get(at) else { return };
         self.modal = Some(crate::dialogs::Modal::Text { title: call.clone(), text: output.clone(), scroll: ScrollHandle::new() });
         cx.notify();
     }
@@ -739,7 +959,8 @@ impl Workspace {
         let scope = self.chat_scope();
         let docked = self.settings.chat_docked;
         let body = self.render_conversation(None, window, cx);
-        let chat = &self.chat;
+        let chat = &self.chat.current;
+        let behind = self.chat.behind_at_work();
         div()
             .flex()
             .flex_col()
@@ -756,7 +977,7 @@ impl Workspace {
                             .child(div().id("chat-scope").truncate().text_size(text_px(12.)).line_height(text_px(17.)).text_color(Theme::text_tertiary()).tooltip(ui::tip(scope.clone())).child(scope)),
                     )
                     .when(!chat.messages.is_empty(), |d| d.child(ui::ghost_button("chat-new", Some("plus"), None).tooltip(ui::tip(t("新对话"))).on_click(self.on(Cmd::NewChat, cx))))
-                    .child(ui::ghost_button("chat-history", Some("history"), None).tooltip(ui::tip(t("历史对话"))).on_click(self.on(Cmd::ToggleHistory, cx)))
+                    .child(ui::ghost_button("chat-history", Some("history"), (behind > 0).then(|| behind.to_string().into())).tooltip(ui::tip(if behind > 0 { tf!("历史对话 · {behind} 个在后台进行", "Conversations · {behind} going on in the background") } else { t("历史对话").to_string() })).on_click(self.on(Cmd::ToggleHistory, cx)))
                     .child(ui::ghost_button("chat-dock", Some(if docked { "picture-in-picture" } else { "panel-right" }), None).tooltip(ui::tip(if docked { t("改为悬浮窗") } else { t("停靠到右侧") })).on_click(self.on(Cmd::DockChat(!docked), cx)))
                     .child(ui::ghost_button("chat-page", Some("expand"), None).tooltip(ui::tip(t("在页面中打开"))).on_click(self.on(Cmd::SetPage(Page::Assistant), cx)))
                     .child(ui::ghost_button("chat-hide", Some("x"), None).tooltip(ui::tip(t("收起助手"))).on_click(self.on(Cmd::ToggleChat, cx))),
@@ -768,7 +989,7 @@ impl Workspace {
     /// The conversation itself: the grants strip, the messages (or the start), the consent card and the composer.
     /// Drawn once a frame: floating, in the column or on the assistant's page; there `column` is the width its text is kept to.
     pub fn render_conversation(&self, column: Option<f32>, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let chat = &self.chat;
+        let chat = &self.chat.current;
         let profile = self.settings.chat_profile();
         let configured = profile.as_ref().is_some_and(|profile| !profile.key().is_empty());
         // A service that is listed but has no key is not "no model": say which one, and what it lacks.
@@ -845,7 +1066,7 @@ impl Workspace {
     }
 
     fn render_messages(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let chat = &self.chat;
+        let chat = &self.chat.current;
         let mut items: Vec<AnyElement> = vec![];
         let mut i = 0;
         while i < chat.messages.len() {
@@ -853,7 +1074,15 @@ impl Workspace {
                 ChatItem::User { text, .. } => {
                     // The servers and groups it names with `@` in the accent.
                     let named: Vec<(std::ops::Range<usize>, HighlightStyle)> = mentions_in(text, &self.view).into_iter().map(|(range, _)| (range, HighlightStyle { color: Some(Theme::accent()), font_weight: Some(FontWeight::MEDIUM), ..Default::default() })).collect();
-                    items.push(div().flex().flex_col().items_end().child(div().max_w(relative(0.88)).px(px(14.)).py(px(9.)).rounded(px(16.)).bg(Theme::groove()).line_height(theme::body_line(21.)).child(StyledText::new(text.clone()).with_highlights(named))).into_any_element());
+                    // Under the pointer: copy it, or go back to it.
+                    let actions = div()
+                        .flex()
+                        .gap(px(2.))
+                        .opacity(0.)
+                        .group_hover("request", |s| s.opacity(1.))
+                        .child(ui::icon_action(("request-copy", i), "copy", Theme::text_tertiary(), t("复制")).on_click(self.on(Cmd::CopyText(text.clone()), cx)))
+                        .child(ui::icon_action(("rewind", i), "undo-2", Theme::text_tertiary(), t("回退到这里：这条和之后的内容从对话中删去，它放回输入框，可以改了再发。已在服务器上执行的操作不会撤销。")).on_click(self.on(Cmd::Rewind(i), cx)));
+                    items.push(div().group("request").flex().flex_col().items_end().gap(px(2.)).child(div().max_w(relative(0.88)).px(px(14.)).py(px(9.)).rounded(px(16.)).bg(Theme::groove()).line_height(theme::body_line(21.)).child(StyledText::new(text.clone()).with_highlights(named))).child(actions).into_any_element());
                     i += 1;
                     continue;
                 }
@@ -964,7 +1193,7 @@ impl Workspace {
     /// A run of tool calls: those done as one line that unfolds, those
     /// still running each with a turning mark.
     fn render_tools(&self, first: usize, end: usize, cx: &mut Context<Self>) -> AnyElement {
-        let chat = &self.chat;
+        let chat = &self.chat.current;
         let run: Vec<(usize, &str, &Option<(String, bool)>)> = (first..end).filter_map(|at| if let ChatItem::Tool { call, result, .. } = &chat.messages[at] { Some((at, call.as_str(), result)) } else { None }).collect();
         let done: Vec<(usize, &str, &(String, bool))> = run.iter().filter_map(|(at, call, result)| result.as_ref().map(|result| (*at, *call, result))).collect();
         let failed = done.iter().filter(|(_, _, (_, failed))| *failed).count();
@@ -1018,7 +1247,21 @@ impl Workspace {
     /// A kept conversation in the list: its title, when and how often it was asked, and a way to delete it
     /// under the pointer. The open one is lit.
     pub fn conversation_row(&self, info: &ChatInfo, cx: &mut Context<Self>) -> Stateful<Div> {
-        let current = info.id == self.chat.id;
+        let current = info.id == self.chat.current.id;
+        // A conversation still in the window says what it is doing: one behind the one on show goes on unseen.
+        let state: Option<AnyElement> = self.chat.live(&info.id).and_then(|live| {
+            if live.pending.is_some() {
+                Some(ui::status_chip("warn", t("等你批准")).into_any_element())
+            } else if live.busy {
+                Some(div().flex().flex_none().items_center().gap(px(5.)).text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(ui::spinner(SharedString::from(format!("conversation-working-{}", info.id)), 12., Theme::accent())).child(t("进行中")).into_any_element())
+            } else if !live.error.is_empty() && !current {
+                Some(ui::status_chip("failed", t("出错了")).into_any_element())
+            } else if !live.queue.is_empty() {
+                Some(ui::status_chip("info", &tf!("{} 条排队", "{} queued", live.queue.len())).into_any_element())
+            } else {
+                None
+            }
+        });
         div()
             .id(SharedString::from(format!("conversation-{}", info.id)))
             .group("conversation")
@@ -1033,7 +1276,49 @@ impl Workspace {
             .hover(|s| s.bg(Theme::hover()))
             .on_click(self.on(Cmd::OpenChat(info.id.clone()), cx))
             .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().when(current, |d| d.font_weight(FontWeight::MEDIUM)).child(info.title.clone())).child(div().text_size(text_px(12.)).text_color(Theme::text_tertiary()).child(tf!("{} · {} 次请求", "{} · {} requests", time::short_time(&info.updated_at), info.requests))))
+            .children(state)
             .child(ui::icon_action(SharedString::from(format!("conversation-delete-{}", info.id)), "bin", Theme::text_tertiary(), t("删除这次对话")).opacity(0.).group_hover("conversation", |s| s.opacity(1.)).on_click(self.on_within(Cmd::DeleteChat(info.id.clone()), cx)))
+    }
+
+    /// The requests waiting for the answer being given, over the box: each can go back in the box
+    /// or out of the queue. Held after an answer failed or was stopped, until the next is sent by hand.
+    fn render_queue(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chat = &self.chat.current;
+        let count = chat.queue.len();
+        div()
+            .flex()
+            .flex_col()
+            .px(px(10.))
+            .py(px(4.))
+            .rounded(px(12.))
+            .border_1()
+            .border_color(Theme::line())
+            .bg(Theme::bg_sunken())
+            .text_size(text_px(12.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .h(text_px(24.))
+                    .text_color(Theme::text_tertiary())
+                    .child(ui::icon("list-todo", 13., Theme::text_tertiary()))
+                    .child(div().flex_1().min_w_0().truncate().child(if chat.busy { tf!("{count} 条排队，当前回答结束后依次发送", "{count} queued, sent in turn as answers end") } else { tf!("{count} 条排队，已暂停", "{count} queued, held") }))
+                    .when(!chat.busy, |d| d.child(ui::ghost_button("queue-send", Some("send"), Some(t("发送下一条").into())).h(text_px(22.)).text_size(text_px(12.)).on_click(self.on(Cmd::SendQueued, cx)))),
+            )
+            .children(chat.queue.iter().enumerate().map(|(n, text)| {
+                let line = text.lines().next().unwrap_or_default().to_string();
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .h(text_px(26.))
+                    .pl(px(19.))
+                    .child(div().flex_1().min_w_0().truncate().text_color(Theme::text_secondary()).child(line))
+                    .child(ui::icon_action(("queued-edit", n), "pen-line", Theme::text_tertiary(), t("放回输入框修改")).on_click(self.on(Cmd::EditQueued(n), cx)))
+                    .child(ui::icon_action(("queued-drop", n), "x", Theme::text_tertiary(), t("移出队列")).on_click(self.on(Cmd::DropQueued(n), cx)))
+            }))
+            .into_any_element()
     }
 
     /// The box a request is written in, `width` wide with its margins.
@@ -1043,6 +1328,7 @@ impl Workspace {
         let commands = if focused { chat.slash_list(&self.settings.commands, cx) } else { vec![] };
         let mentions = if focused && commands.is_empty() { chat.mention_list(&self.view, cx) } else { vec![] };
         let ready = !chat.input.read(cx).text().trim().is_empty();
+        let busy = chat.current.busy;
         // The servers and groups named with `@` stand on a tint, as they will in the message.
         let marks = mentions_in(chat.input.read(cx).text(), &self.view).into_iter().map(|(range, _)| (range, Theme::accent_soft())).collect();
         chat.input.update(cx, |input, _| input.set_marks(marks));
@@ -1116,6 +1402,7 @@ impl Workspace {
                         .child(hint()),
                 )
             })
+            .when(!chat.current.queue.is_empty(), |d| d.child(self.render_queue(cx)))
             .child(
                 div()
                     .flex()
@@ -1129,9 +1416,11 @@ impl Workspace {
                     .bg(Theme::bg_body())
                     .shadow(theme::shadow_card())
                     // A pixel width: a wrapping input under ancestors whose widths are all relative is measured too narrow.
-                    .child(div().flex().w(px(width - 32. - 22. - 36.)).py(px(5.)).max_h(px(170.)).overflow_hidden().text_size(text_px(13.)).line_height(text_px(20.)).text_color(Theme::text()).child(chat.input.clone()))
+                    .child(div().flex().w(px(width - 32. - 22. - 36. - if busy && ready { 36. } else { 0. })).py(px(5.)).max_h(px(170.)).overflow_hidden().text_size(text_px(13.)).line_height(text_px(20.)).text_color(Theme::text()).child(chat.input.clone()))
                     .child(div().flex_1())
-                    .child(if chat.busy { round("chat-stop", "square", true).on_click(self.on(Cmd::StopChat, cx)) } else { round("chat-send", "send", ready).on_click(self.on(Cmd::Ask, cx)) }),
+                    // While an answer is being given, what is written waits in the queue; the answer can be stopped.
+                    .when(busy && ready, |d| d.child(round("chat-queue", "send", true).tooltip(ui::tip(t("排队：当前回答结束后发送"))).on_click(self.on(Cmd::Ask, cx))))
+                    .child(if busy { round("chat-stop", "square", !ready).tooltip(ui::tip(t("停止回答"))).on_click(self.on(Cmd::StopChat, cx)) } else { round("chat-send", "send", ready).on_click(self.on(Cmd::Ask, cx)) }),
             )
             .child(
                 div()
@@ -1141,7 +1430,7 @@ impl Workspace {
                     .px(px(4.))
                     .text_size(text_px(11.))
                     .text_color(Theme::text_placeholder())
-                    .child(div().flex_1().min_w_0().truncate().child(t("Enter 发送，Shift+Enter 换行 · 执行前请核对命令")))
+                    .child(div().flex_1().min_w_0().truncate().child(if busy { t("Enter 排队，当前回答结束后发送 · Esc 停止") } else { t("Enter 发送，Shift+Enter 换行 · 执行前请核对命令") }))
                     .child(div().id("chat-model").flex().flex_none().items_center().gap(px(3.)).max_w(relative(0.5)).cursor_pointer().hover(|s| s.text_color(Theme::text_secondary())).on_click(self.on_menu(MenuKind::Models, cx)).child(div().min_w_0().truncate().child(model.to_string())).child(ui::icon("chevron-down", 11., Theme::text_placeholder()))),
             )
             .into_any_element()

@@ -803,5 +803,15 @@
  "网络与同步": "Network & sync",
  "数据与更新": "Data & updates",
  "主题、语言和字号；改了立即生效。": "Theme, language and text size; changes apply at once.",
- "模型服务、外观、自动巡检、通知和技能；都只保存在这台电脑上": "Model services, appearance, automatic inspection, notifications and skills; all kept on this computer only"
+ "模型服务、外观、自动巡检、通知和技能；都只保存在这台电脑上": "Model services, appearance, automatic inspection, notifications and skills; all kept on this computer only",
+ "回退到这里：这条和之后的内容从对话中删去，它放回输入框，可以改了再发。已在服务器上执行的操作不会撤销。": "Go back to here: this request and everything after it leave the conversation, and it goes back in the box to be changed and sent again. What was already done on the servers is not undone.",
+ "等你批准": "Awaiting approval",
+ "进行中": "Working",
+ "出错了": "Failed",
+ "排队：当前回答结束后发送": "Queue: sent when the current answer ends",
+ "停止回答": "Stop the answer",
+ "Enter 排队，当前回答结束后发送 · Esc 停止": "Enter queues it until the current answer ends · Esc stops",
+ "发送下一条": "Send next",
+ "放回输入框修改": "Back to the box to change",
+ "移出队列": "Remove from the queue"
 }

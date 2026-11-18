@@ -56,8 +56,10 @@ impl Workspace {
         // The model is named only once it can be asked: one without a key is not in use.
         let model = self.settings.chat_profile().filter(|profile| !profile.key().is_empty()).map(|profile| profile.title()).unwrap_or_default();
         let about = if model.is_empty() { self.chat_scope() } else { format!("{model} · {}", self.chat_scope()) };
-        let mut actions = vec![ui::ghost_button("assistant-history", Some("history"), Some(t("历史对话").into())).on_click(self.on(Cmd::ToggleHistory, cx)).into_any_element()];
-        if !self.chat.messages.is_empty() { actions.push(new) }
+        let behind = self.chat.behind_at_work();
+        let history = if behind > 0 { tf!("历史对话 · {behind} 个在后台进行", "Conversations · {behind} going on in the background") } else { t("历史对话").to_string() };
+        let mut actions = vec![ui::ghost_button("assistant-history", Some("history"), Some(history.into())).on_click(self.on(Cmd::ToggleHistory, cx)).into_any_element()];
+        if !self.chat.current.messages.is_empty() { actions.push(new) }
         let head = self.page_head(t("助手"), about, actions, cx);
         div().flex().flex_col().size_full().child(head).child(self.render_conversation(Some(column), window, cx)).into_any_element()
     }
