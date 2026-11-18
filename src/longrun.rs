@@ -140,6 +140,7 @@ impl Workspace {
             actions.push(ui::ghost_button("long-fold-all", Some(if all_folded { "chevron-down" } else { "chevron-up" }), Some(if all_folded { t("全部展开") } else { t("全部折叠") }.into())).on_click(self.on(Cmd::FoldLongHosts(!all_folded), cx)).into_any_element());
         }
         actions.extend([
+            ui::ghost_button("long-auto", Some("history"), Some(tf!("自动巡检：{}", "Auto inspection: {}", crate::settings::long_auto_label(self.settings.auto_long_minutes)).into())).on_click(self.on_menu(MenuKind::AutoLong, cx)).into_any_element(),
             ui::ghost_button("long-hours", Some("timer"), Some(tf!("阈值：{}", "Threshold: {}", hours_label(hours)).into())).on_click(self.on_menu(MenuKind::LongHours, cx)).into_any_element(),
             ui::secondary_button("long-report", t("让助手分析")).child(ui::icon("sparkle", 13., Theme::accent())).on_click(self.on(Cmd::Suggest(tf!("用 ops_jobs 检查全部服务器上运行超过 {hours} 小时的用户任务，说明每个任务是谁的、在做什么、是否像被遗忘或卡住，并给出建议（只读，不要终止任何进程）。", "Use ops_jobs to check every server for user tasks running longer than {hours} hours; say whose each is, what it is doing, whether it looks forgotten or stuck, and what you suggest (read-only; do not kill anything).")), cx)).into_any_element(),
             ui::primary_button("long-check", if busy { t("正在检查…") } else { t("检查全部") }).when(busy, |b| b.opacity(0.6)).on_click(self.on(Cmd::CheckLongJobs("all".into()), cx)).into_any_element(),

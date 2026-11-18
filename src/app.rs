@@ -136,6 +136,8 @@ pub enum Cmd {
     CloseTerminal(usize),
     // ---- users
     UsersHost(String),
+    /// One account of the server on show, with its logins and quotas; `None` goes back to the list.
+    UsersAccount(Option<String>),
     /// Show the system accounts too, or hide them again.
     UsersSystem,
     /// Read the accounts of the servers a selector names.
@@ -241,6 +243,11 @@ pub enum Cmd {
     ToggleKeepRunning,
     Quit,
     SetAutoInspect(u32),
+    /// The automatic readings of 用户 and 安全, in minutes (0 is off).
+    SetAutoAccounts(u32),
+    SetAutoSecurity(u32),
+    /// The automatic look for long tasks: minutes, or along with the automatic inspection.
+    SetAutoLong(Option<u32>),
     PickChatModel(String),
     AddProvider(&'static str),
     RemoveProvider(usize),
@@ -292,6 +299,9 @@ pub enum MenuKind {
     /// A server on the 安全 page: its triage.
     AttackHost(String),
     AutoInspect,
+    AutoAccounts,
+    AutoSecurity,
+    AutoLong,
     DiskScan,
     LongHours,
 }
@@ -355,6 +365,9 @@ pub struct Workspace {
     pub long_folded: HashSet<String>,
     pub long_filters: HashMap<String, (Entity<TextInput>, Subscription)>,
     pub attack_working: HashSet<String>,
+    /// When each page's automatic reading last tried a server (`kind/host`, ms): one that cannot
+    /// be reached waits out the interval like the rest.
+    pub auto_tried: HashMap<String, i64>,
     pub open_attack: Option<String>,
     // ---- audit
     pub audit_host: Option<String>,
@@ -412,7 +425,7 @@ impl Workspace {
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
         let sync = crate::sync::SyncPage::new(&fleet, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), users, terminal: Default::default(), terminal_needs_focus: false, long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), users, terminal: Default::default(), terminal_needs_focus: false, long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), auto_tried: HashMap::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
         // Only the column comes back as it was left: a conversation floating over the page at start is in the way.
         if !this.settings.chat_docked { this.settings.chat_hidden = true }
         this.apply_appearance(window);
@@ -639,6 +652,21 @@ impl Workspace {
                     items.push(item(&crate::disk::rescan_label(minutes), self.settings.disk_scan_minutes == minutes, None, Cmd::SetDiskScan(minutes)));
                 }
             }
+            MenuKind::AutoAccounts | MenuKind::AutoSecurity => {
+                let accounts = matches!(kind, MenuKind::AutoAccounts);
+                let chosen = if accounts { self.settings.auto_accounts_minutes } else { self.settings.auto_security_minutes };
+                for minutes in wisp_ops_core::settings::AUTO_PAGE {
+                    items.push(item(&crate::settings::interval_label(minutes), chosen == minutes, None, if accounts { Cmd::SetAutoAccounts(minutes) } else { Cmd::SetAutoSecurity(minutes) }));
+                }
+            }
+            MenuKind::AutoLong => {
+                let along = tf!("随机群自动巡检（{}）", "Along with the automatic inspection ({})", crate::settings::interval_label(self.settings.auto_inspect_minutes));
+                items.push(item(&along, self.settings.auto_long_minutes.is_none(), None, Cmd::SetAutoLong(None)));
+                breaks.push(items.len());
+                for minutes in wisp_ops_core::settings::AUTO_PAGE {
+                    items.push(item(&crate::settings::interval_label(minutes), self.settings.auto_long_minutes == Some(minutes), None, Cmd::SetAutoLong(Some(minutes))));
+                }
+            }
             MenuKind::LongHours => {
                 for hours in wisp_ops_core::settings::LONG_JOB_HOURS {
                     items.push(item(&crate::longrun::hours_label(hours), self.settings.long_job_hours == hours, None, Cmd::SetLongHours(hours)));
@@ -751,11 +779,11 @@ impl Workspace {
             }
             cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ToggleImportAll(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::BindNewCredential | Cmd::TestCredential | Cmd::HostLogin(_) | Cmd::HostPick(_) | Cmd::HostSudoToo | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
             cmd @ (Cmd::OpenTerminal(_) | Cmd::ToggleTerminal | Cmd::TerminalTab(_) | Cmd::CloseTerminal(_)) => self.run_terminal(cmd, window, cx),
-            cmd @ (Cmd::UsersHost(_) | Cmd::UsersSystem | Cmd::ReadAccounts(_) | Cmd::NewUsers | Cmd::ResetPassword(..) | Cmd::UsersPasswordMode(_) | Cmd::UsersExpire) => self.run_users(cmd, window, cx),
+            cmd @ (Cmd::UsersHost(_) | Cmd::UsersAccount(_) | Cmd::UsersSystem | Cmd::ReadAccounts(_) | Cmd::NewUsers | Cmd::ResetPassword(..) | Cmd::UsersPasswordMode(_) | Cmd::UsersExpire) => self.run_users(cmd, window, cx),
             cmd @ (Cmd::DiskHost(_) | Cmd::AskFullScan(_) | Cmd::DiskScan(..) | Cmd::DiskPath(_) | Cmd::DiskZoom(_) | Cmd::DiskList(_) | Cmd::ToggleDiskFree) => self.run_disk(cmd, cx),
             Cmd::CheckLongJobs(selector) => self.check_long_jobs(selector, false, cx),
             cmd @ (Cmd::ToggleLongHost(_) | Cmd::FoldLongHosts(_) | Cmd::LongUser(..) | Cmd::LongFilter(..)) => self.run_longrun(cmd, cx),
-            Cmd::ScanAttacks(selector) => self.scan_attacks(selector, cx),
+            Cmd::ScanAttacks(selector) => self.scan_attacks(selector, false, cx),
             Cmd::OpenAttack(host) => self.open_attack = if self.open_attack.as_ref() == Some(&host) { None } else { Some(host) },
             Cmd::SelectRun(host, at) => {
                 self.open_host = Some(host.clone());
@@ -1245,6 +1273,12 @@ impl Workspace {
                 if let Some((view, _)) = self.terminal.tabs.get(self.terminal.active) { view.update(cx, |view, cx| view.type_text(&text, cx)) }
             }
             "users-host" => self.run(Cmd::UsersHost(arg.to_string()), window, cx),
+            // `users-account:<host>/<account>` shows that account.
+            "users-account" => {
+                let (host, account) = arg.split_once('/').unwrap_or((arg, "root"));
+                self.run(Cmd::UsersHost(host.to_string()), window, cx);
+                self.run(Cmd::UsersAccount(Some(account.to_string())), window, cx);
+            }
             // `users-new:alice+bob` opens the dialog with those names written in.
             "users-new" => {
                 self.run(Cmd::NewUsers, window, cx);
@@ -1308,7 +1342,8 @@ impl Workspace {
             "open-chat" => self.run(Cmd::OpenChat(arg.to_string()), window, cx),
             // Device sync: `sync:fill=<url>|<user>|<password>|<passphrase>`, `sync:push`, `sync:list`, `sync:preview` (the newest), `sync:pull`, `sync:scroll`.
             "sync" => self.dev_sync(arg, window, cx),
-            "tab" => self.run(Cmd::SetSettingsTab(match arg { "general" => crate::settings::Tab::General, "skills" => crate::settings::Tab::Skills, _ => crate::settings::Tab::Models }), window, cx),
+            // `tab:models|appearance|automation|notify|network|data|skills` (`general` is appearance).
+            "tab" => self.run(Cmd::SetSettingsTab(crate::settings::Tab::named(arg)), window, cx),
             "shot" => {
                 let path = PathBuf::from(arg);
                 window.defer(cx, move |window, cx| {

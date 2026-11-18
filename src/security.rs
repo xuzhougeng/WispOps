@@ -38,23 +38,25 @@ fn sources(row: &SecuritySnapshot) -> f64 {
 }
 
 impl Workspace {
-    /// Triage the selected servers off the main thread, as root where the window may.
-    pub fn scan_attacks(&mut self, selector: String, cx: &mut Context<Self>) {
+    /// Triage the selected servers off the main thread, as root where the window may. `timed`
+    /// is the page's automatic triage: it says nothing when done.
+    pub fn scan_attacks(&mut self, selector: String, timed: bool, cx: &mut Context<Self>) {
         let names: Vec<String> = match self.fleet.select_names(&selector) {
             Ok(names) => names.into_iter().filter(|name| !self.attack_working.contains(name)).collect(),
-            Err(error) => return self.fail(error, cx),
+            Err(error) => return if !timed { self.fail(error, cx) },
         };
         if names.is_empty() { return }
         self.attack_working.extend(names.iter().cloned());
         let fleet = self.fleet.clone();
         let selector = names.join(",");
-        let work = cx.background_executor().spawn(async move { fleet.attack_scan(&selector, WINDOW_HOURS) });
+        let work = cx.background_executor().spawn(async move { fleet.attack_scan(&selector, WINDOW_HOURS, timed) });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| {
                 for name in &names { this.attack_working.remove(name); }
                 this.reload(cx);
                 match result {
+                    _ if timed => {}
                     Ok(words) => this.say(words, cx),
                     Err(error) => this.fail(error, cx),
                 }
@@ -68,6 +70,7 @@ impl Workspace {
     pub fn render_security(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let busy = !self.attack_working.is_empty();
         let actions = vec![
+            ui::ghost_button("attack-auto", Some("history"), Some(tf!("自动巡检：{}", "Auto inspection: {}", crate::settings::interval_label(self.settings.auto_security_minutes)).into())).on_click(self.on_menu(crate::app::MenuKind::AutoSecurity, cx)).into_any_element(),
             ui::secondary_button("attack-report", t("让助手分析")).child(ui::icon("sparkle", 13., Theme::accent())).on_click(self.on(Cmd::Suggest("/security all".into()), cx)).into_any_element(),
             ui::primary_button("attack-scan", if busy { t("正在排查…") } else { t("排查全部") }).when(busy, |b| b.opacity(0.6)).on_click(self.on(Cmd::ScanAttacks("all".into()), cx)).into_any_element(),
         ];

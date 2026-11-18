@@ -296,8 +296,74 @@ def accounts(host, rooted):
     if rooted:
         out += ["@@shadow", "root:locked:19800:", "daemon:none:19000:", "sshd:none:19000:", "ops:set:19900:", "nobody:none:19000:"]
         out += [f"{name}:{state}:{0 if name == 'erin' else 19950}:" for name, _, _, _, state, _ in people]
-    out += ["@@who"] + [name for name, *_, sessions in people for _ in range(sessions if host.startswith("gpu") else 0)] + ["@@end"]
+    out += ["@@who"] + [name for name, *_, sessions in people for _ in range(sessions if host.startswith("gpu") else 0)]
+    out += logins(host, people, rooted) + quotas(host, people, rooted) + ["@@end"]
     return "\n".join(out) + "\n"
+
+
+# Where each person logs in from (their desk or the VPN).
+DESKS = {"alice": "10.8.0.21", "bob": "10.8.0.34", "carol": "10.8.0.17", "dave": "172.16.4.9", "erin": "10.8.0.52", "frank": "10.8.0.40", "grace": "10.8.0.45", "intern01": "10.8.0.88", "ops": "10.8.0.2"}
+
+
+def iso(seconds_ago):
+    return time.strftime("%Y-%m-%dT%H:%M:%S+08:00", time.gmtime(time.time() + 8 * 3600 - seconds_ago))
+
+
+def logins(host, people, rooted):
+    """wtmp sessions, and sshd's log as the host reduces it: every person logs in daily; root and
+    alice are tried from outside; a few names that do not exist are tried too."""
+    names = [p[0] for p in people] + ["ops"]
+    open_ = {name for name, *_, sessions in people if sessions and host.startswith("gpu")}
+    out = ["@@tz", "+0800", str(int(time.time())), "@@sessions"]
+    rows = []
+    for day in range(12):
+        for k, name in enumerate(names):
+            if (day + k) % 3 == 2:
+                continue
+            start = day * 86400 + 3600 * (2 + k) + 600 * k
+            ip = DESKS[name] if (day + k) % 5 else "10.8.0.99"
+            if day == 0 and name in open_:
+                rows.append((start, f"{name:<8} pts/{k}        {ip:<16} {iso(start)}   still logged in"))
+            elif day == 6 and k == 1:
+                rows.append((start, f"{name:<8} pts/{k}        {ip:<16} {iso(start)} - crash                     (03:10)"))
+            else:
+                rows.append((start, f"{name:<8} pts/{k}        {ip:<16} {iso(start)} - {iso(start - 3600 * (1 + k % 4) - 60 * (7 * k % 50))}  (0{1 + k % 4}:{7 * k % 50:02d})"))
+    out += [line for _, line in sorted(rows)] + ["", f"wtmp begins {iso(40 * 86400)}"]
+    if not rooted:
+        return out + ["@@logsrc", "none", "@@sshlog"]
+    log = [f"N\t-\t{4180 if host == 'bastion' else 640}\t{iso(30 * 86400)}"]
+    for k, name in enumerate(names):
+        log.append(f"A\t{name}\t{18 + 3 * k}\t{DESKS[name]}\tpublickey\t{iso(29 * 86400)}\t{iso(3600 * (2 + k))}")
+        if k % 3 == 0:
+            log.append(f"A\t{name}\t{2 + k}\t10.8.0.99\tpassword\t{iso(20 * 86400)}\t{iso(86400 * 2 + 3600 * k)}")
+    attack = 3800 if host == "bastion" else 410
+    log += [f"F\troot\t{attack // 2}\t203.0.113.7\tpassword\t{iso(25 * 86400)}\t{iso(1200)}", f"F\troot\t{attack // 4}\t198.51.100.23\tpassword\t{iso(9 * 86400)}\t{iso(5400)}", f"F\troot\t{attack // 8}\t192.0.2.140\tpublickey\t{iso(3 * 86400)}\t{iso(86400)}"]
+    log += [f"G\troot\t{attack // 2 + attack // 4 + attack // 8}\t3\t0\t{iso(25 * 86400)}\t{iso(1200)}"]
+    log += ["F\talice\t3\t10.8.0.99\tpassword\t" + iso(4 * 86400) + "\t" + iso(4 * 86400 - 50), "F\talice\t14\t203.0.113.7\tpassword\t" + iso(6 * 86400) + "\t" + iso(7200), "G\talice\t17\t2\t0\t" + iso(6 * 86400) + "\t" + iso(7200)]
+    log += ["F\tbob\t1\t10.8.0.34\tpassword\t" + iso(86400 * 3) + "\t" + iso(86400 * 3), "G\tbob\t1\t1\t0\t" + iso(86400 * 3) + "\t" + iso(86400 * 3)]
+    for name, tries in [("admin", 96), ("test", 41), ("oracle", 22), ("ubuntu", 19), ("postgres", 11)]:
+        log.append(f"G\t{name}\t{tries}\t{tries // 6 + 1}\t1\t{iso(20 * 86400)}\t{iso(7000)}")
+    return out + ["@@logsrc", "journal", "@@sshlog"] + log
+
+
+def quotas(host, people, rooted):
+    """The GPU servers keep /data under user quotas (and /scratch asks for them but has them off)."""
+    mounts = ["@@qmounts", "/\t/dev/nvme0n1p2\text4\trw,relatime"]
+    if not host.startswith("gpu"):
+        return mounts
+    mounts += ["/data\t/dev/md0\txfs\trw,relatime,usrquota", "/scratch\t/dev/nvme1n1\text4\trw,relatime,usrquota"]
+    out = mounts + ["@@qtools", "repquota", "@@quotaon", "user quota on /data (/dev/md0) is on (enforced)", "user quota on /scratch (/dev/nvme1n1) is off", "@@repquota"]
+    if not rooted:
+        return out
+    G = 1024 * 1024
+    use = {"alice": (412, 500, 600), "bob": (515, 500, 600), "carol": (88, 500, 600), "dave": (600, 500, 600), "erin": (3, 500, 600), "frank": (0, 0, 0), "grace": (47, 200, 250), "intern01": (19, 100, 120)}
+    out += ["*** Report for user quotas on device /dev/md0", "Block grace time: 7days; Inode grace time: 7days", "User            used    soft    hard  grace    used  soft  hard  grace", "-" * 70, "root      --    1024       0       0      0      12     0     0      0"]
+    for name, *_ in people:
+        used, soft, hard = use.get(name, (0, 0, 0))
+        flags = "+-" if soft and used > soft else "--"
+        grace = int(time.time()) + 3 * 86400 if flags == "+-" else 0
+        out.append(f"{name:<9} {flags} {used * G:>9} {soft * G:>9} {hard * G:>9} {grace:>10} {used * 913:>7} 0 0 0")
+    return out
 
 
 def main():

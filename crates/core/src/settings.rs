@@ -53,6 +53,13 @@ pub struct Settings {
     pub terminal_height: f32,
     /// Minutes between automatic read-only inspections of every server; 0 is off.
     pub auto_inspect_minutes: u32,
+    /// Minutes between automatic readings of every server's accounts (用户: logins and quotas too); 0 is off.
+    pub auto_accounts_minutes: u32,
+    /// Minutes between automatic security triages of every server (安全); 0 is off.
+    pub auto_security_minutes: u32,
+    /// Minutes between automatic looks for long-running tasks (长时任务); `None` goes along with
+    /// the automatic inspection, looking at the servers it inspects.
+    pub auto_long_minutes: Option<u32>,
     /// Minutes between the follow-up scans of the directories a first disk scan measured; 0 is off.
     pub disk_scan_minutes: u32,
     /// A user's task counts as long-running after this many hours.
@@ -90,7 +97,7 @@ pub const WEBHOOK_TASKS: [&str; 3] = ["always", "problems", "change"];
 impl Default for Settings {
     fn default() -> Self {
         let providers = provider::DEFAULT_PRESETS.iter().filter_map(|key| provider::preset(key)).map(Provider::from_preset).collect();
-        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, chat_docked: false, terminal_height: 0., auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24, auto_update_check: true, keep_running: cfg!(target_os = "macos"), webhooks: vec![], webhook_tasks: "problems".into() };
+        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, chat_docked: false, terminal_height: 0., auto_inspect_minutes: 0, auto_accounts_minutes: 0, auto_security_minutes: 0, auto_long_minutes: None, disk_scan_minutes: 1440, long_job_hours: 24, auto_update_check: true, keep_running: cfg!(target_os = "macos"), webhooks: vec![], webhook_tasks: "problems".into() };
         settings.tidy();
         settings
     }
@@ -102,6 +109,9 @@ pub const MAX_FONT_SIZE: f32 = 20.;
 
 /// The intervals 自动巡检 offers, in minutes; 0 is off.
 pub const AUTO_INSPECT: [u32; 9] = [0, 5, 15, 30, 60, 180, 360, 720, 1440];
+
+/// The intervals the automatic readings of 用户, 长时任务 and 安全 offer, in minutes; 0 is off.
+pub const AUTO_PAGE: [u32; 7] = [0, 30, 60, 180, 360, 720, 1440];
 
 /// The intervals the follow-up disk scans offer, in minutes; 0 is off.
 pub const DISK_SCAN: [u32; 5] = [0, 360, 720, 1440, 10080];
@@ -207,6 +217,9 @@ impl Settings {
         if !self.chat_width.is_finite() || self.chat_width < 0. { self.chat_width = 0. }
         if !self.terminal_height.is_finite() || self.terminal_height < 0. { self.terminal_height = 0. }
         if !AUTO_INSPECT.contains(&self.auto_inspect_minutes) { self.auto_inspect_minutes = 0 }
+        if !AUTO_PAGE.contains(&self.auto_accounts_minutes) { self.auto_accounts_minutes = 0 }
+        if !AUTO_PAGE.contains(&self.auto_security_minutes) { self.auto_security_minutes = 0 }
+        if self.auto_long_minutes.is_some_and(|minutes| !AUTO_PAGE.contains(&minutes)) { self.auto_long_minutes = None }
         if !DISK_SCAN.contains(&self.disk_scan_minutes) { self.disk_scan_minutes = 1440 }
         if !LONG_JOB_HOURS.contains(&self.long_job_hours) { self.long_job_hours = 24 }
         if !WEBHOOK_TASKS.contains(&self.webhook_tasks.as_str()) { self.webhook_tasks = "problems".into() }

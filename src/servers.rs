@@ -343,10 +343,11 @@ impl Workspace {
                         let due = this.fleet.inspection_due(minutes);
                         if !due.is_empty() {
                             this.host_work(due.join(","), cx, |fleet, selector| fleet.inspect(selector, "auto").map(|_| String::new()));
-                            // The same servers are looked over for tasks that have run too long.
-                            this.check_long_jobs(due.join(","), true, cx);
+                            // The same servers are looked over for tasks that have run too long, unless 长时任务 keeps its own time.
+                            if this.settings.auto_long_minutes.is_none() { this.check_long_jobs(due.join(","), true, cx) }
                         }
                     }
+                    this.run_auto_pages(cx);
                     this.run_due_tasks(cx);
                     this.run_due_disk_scans(cx);
                 });
@@ -354,6 +355,35 @@ impl Workspace {
             }
         })
         .detach();
+    }
+
+    /// The servers due for a page's automatic reading: their latest record of `kind` is older
+    /// than `minutes`, and they were not tried in that time either.
+    fn auto_due(&mut self, kind: &str, minutes: u32) -> Vec<String> {
+        let now = wisp_ops_core::time::now_millis();
+        let cutoff = now - i64::from(minutes) * 60_000;
+        let due: Vec<String> = self.fleet.store_due(kind, minutes).into_iter().filter(|name| self.auto_tried.get(&format!("{kind}/{name}")).is_none_or(|at| *at < cutoff)).collect();
+        for name in &due { self.auto_tried.insert(format!("{kind}/{name}"), now); }
+        due
+    }
+
+    /// 用户, 长时任务 and 安全 each read the servers again on their own interval, as the
+    /// pages' buttons do (as root where the window may), and say nothing when done.
+    pub fn run_auto_pages(&mut self, cx: &mut Context<Self>) {
+        if let Some(minutes) = self.settings.auto_long_minutes.filter(|minutes| *minutes > 0) {
+            let due = self.auto_due("longrun", minutes);
+            if !due.is_empty() { self.check_long_jobs(due.join(","), true, cx) }
+        }
+        let minutes = self.settings.auto_accounts_minutes;
+        if minutes > 0 {
+            let due = self.auto_due("accounts", minutes);
+            if !due.is_empty() { self.read_accounts(due.join(","), true, cx) }
+        }
+        let minutes = self.settings.auto_security_minutes;
+        if minutes > 0 {
+            let due = self.auto_due("security", minutes);
+            if !due.is_empty() { self.scan_attacks(due.join(","), true, cx) }
+        }
     }
 
     // ---- drawing
