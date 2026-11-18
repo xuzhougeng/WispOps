@@ -15,6 +15,8 @@ pub mod files;
 pub mod inspect;
 /// Running Slurm, PBS and LSF jobs and their working directories.
 pub mod jobs;
+/// Logins of a host's accounts (wtmp sessions; SSH logins accepted and failed), read with the accounts.
+pub mod logins;
 /// User processes and scheduler jobs that have run longer than a threshold.
 pub mod longrun;
 /// Muted findings: problems the owner acknowledged for a while.
@@ -23,6 +25,8 @@ pub mod mutes;
 pub mod omics;
 /// Fleet overview: status matrix, sparkline metrics, reachability and disk forecasts per host.
 pub mod overview;
+/// Disk quotas of a host's accounts: the filesystems with user quotas and `repquota`, read with the accounts.
+pub mod quotas;
 /// Capability probe: what a host is and what the login may do.
 pub mod probe;
 /// Model-facing text for fleet command output and fleet inspections.

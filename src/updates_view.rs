@@ -90,7 +90,7 @@ impl Workspace {
             }
             Cmd::ShowUpdate => {
                 self.page = Page::Settings;
-                self.settings_view.tab = Tab::General;
+                self.settings_view.tab = Tab::Data;
             }
             // The person may have moved or deleted it since: then it can be downloaded again.
             Cmd::RevealUpdate(path) if !path.is_file() => {

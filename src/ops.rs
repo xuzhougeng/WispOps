@@ -712,6 +712,16 @@ impl Fleet {
         }).map(|host| host.name.clone()).collect()
     }
 
+    /// The servers whose latest record of `kind` in the store (`accounts`, `security`,
+    /// `longrun`) is older than `minutes`, or that have none.
+    pub fn store_due(&self, kind: &str, minutes: u32) -> Vec<String> {
+        let cutoff = time::now_ms() - i64::from(minutes) * 60_000;
+        self.inventory().hosts().iter().filter(|host| {
+            let last = self.store.read_bounded::<Value>(kind, &host.name).ok().and_then(|rows| rows.last().and_then(|row| row["at"].as_str().map(|at| util::date_parse(at) as i64)));
+            last.is_none_or(|at| at < cutoff)
+        }).map(|host| host.name.clone()).collect()
+    }
+
     pub fn unblock(&self, host: &str) {
         self.runner.guard().clear(host);
     }

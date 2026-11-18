@@ -34,19 +34,22 @@ fn run_error(result: &RunResult) -> String {
 
 impl Fleet {
     /// Read the accounts of the selected servers and keep them: as root wherever the window may,
-    /// without it elsewhere (then the password states are not known).
-    pub fn read_accounts(&self, selector: &str) -> Result<String, String> {
+    /// without it elsewhere (then the password states are not known). `timed` is the page's own
+    /// automatic reading, audited as a task rather than the person's approval.
+    pub fn read_accounts(&self, selector: &str, timed: bool) -> Result<String, String> {
         let hosts = self.select(selector)?;
         let (rooted, plain): (Vec<Host>, Vec<Host>) = hosts.into_iter().partition(|host| self.root_way(host) == Ok(true));
         let at = time::to_iso(time::now_ms());
         let (mut read, mut failed) = (0, vec![]);
         for (group, sudo) in [(rooted, true), (plain, false)] {
             if group.is_empty() { continue }
-            let mut exec = Exec::read("window:accounts", if sudo { Authorization::Approval } else { Authorization::ReadOnly });
+            let authorization = if !sudo { Authorization::ReadOnly } else if timed { Authorization::Task } else { Authorization::Approval };
+            let mut exec = Exec::read(if timed { "window:auto-accounts" } else { "window:accounts" }, authorization);
             exec.sudo = sudo;
-            exec.timeout_ms = self.config.ssh.connect_timeout_sec * 1000 + 30_000;
-            exec.max_output_bytes = Some(4 << 20);
-            exec.audit_command = Some("(built-in read-only listing of accounts and groups)".into());
+            // The logins take a pass over a month of sshd's log lines.
+            exec.timeout_ms = self.config.ssh.connect_timeout_sec * 1000 + 90_000;
+            exec.max_output_bytes = Some(8 << 20);
+            exec.audit_command = Some("(built-in read-only listing of accounts and groups, their logins and disk quotas)".into());
             for result in self.execute_one(&group, accounts::ACCOUNTS_SCRIPT, &exec) {
                 match accounts::parse_accounts(&result.stdout) {
                     Some(report) => {
@@ -143,7 +146,7 @@ impl Fleet {
             }
         }
         let names: Vec<&str> = out.iter().map(|outcome| outcome.host.as_str()).collect();
-        let _ = self.read_accounts(&names.join(","));
+        let _ = self.read_accounts(&names.join(","), false);
         Ok(out)
     }
 
@@ -164,7 +167,7 @@ impl Fleet {
         let result = self.execute_one(std::slice::from_ref(&host), &change::reset_script(account, &password, expire), &exec).remove(0);
         let stdout = change::redact(&result.stdout, &[&password]);
         let outcome = change::parse_outcomes(&stdout).into_iter().find(|(name, _)| name == account).map(|(_, outcome)| outcome);
-        let _ = self.read_accounts(host_name);
+        let _ = self.read_accounts(host_name, false);
         match outcome {
             Some(Outcome::Reset) => Ok(generated.then_some(password)),
             Some(Outcome::Missing) => Err(tf!("{host_name} 上没有账号 {account}。", "There is no account {account} on {host_name}.")),

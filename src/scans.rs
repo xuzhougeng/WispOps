@@ -259,14 +259,16 @@ impl Fleet {
     // ---- login attacks
 
     /// Triage the selected servers for the security page: as root wherever the window may (the
-    /// auth log is root's to read), without it elsewhere.
-    pub fn attack_scan(&self, selector: &str, hours: u32) -> Result<String, String> {
+    /// auth log is root's to read), without it elsewhere. `timed` is the page's own automatic
+    /// triage, audited as a task rather than the person's approval.
+    pub fn attack_scan(&self, selector: &str, hours: u32, timed: bool) -> Result<String, String> {
         let hosts = self.select(selector)?;
         let (rooted, plain): (Vec<Host>, Vec<Host>) = hosts.into_iter().partition(|host| self.root_way(host) == Ok(true));
         let mut found = vec![];
         for (group, sudo) in [(rooted, true), (plain, false)] {
             if group.is_empty() { continue }
-            let collect = Collect { sudo, tool: "window:security".into(), session: None, authorization: if sudo { Authorization::Approval } else { Authorization::ReadOnly }, cancel: None };
+            let authorization = if !sudo { Authorization::ReadOnly } else if timed { Authorization::Task } else { Authorization::Approval };
+            let collect = Collect { sudo, tool: if timed { "window:auto-security" } else { "window:security" }.into(), session: None, authorization, cancel: None };
             found.extend(self.security(&group, hours, &collect));
         }
         let failed: Vec<&str> = found.iter().filter(|(_, report, _)| report.is_none()).map(|(host, ..)| host.as_str()).collect();

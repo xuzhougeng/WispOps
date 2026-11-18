@@ -12,11 +12,49 @@ use wisp_ops_core::ai::Protocol;
 use wisp_ops_core::provider::{self, Provider};
 use wisp_ops_core::settings::{Language, Settings};
 
+/// The parts of the page, listed at its left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
     Models,
-    General,
+    Appearance,
+    /// 自动巡检 and 后台运行.
+    Automation,
+    /// 外部通知.
+    Notify,
+    /// The proxy and the device sync.
+    Network,
+    /// The data folder, updates and the version.
+    Data,
     Skills,
+}
+
+/// Each part: what it is, its icon and its name.
+const TABS: [(Tab, &str, &str); 7] = [
+    (Tab::Models, "sparkle", "模型"),
+    (Tab::Appearance, "palette", "外观"),
+    (Tab::Automation, "history", "巡检与后台"),
+    (Tab::Notify, "send", "通知"),
+    (Tab::Network, "link", "网络与同步"),
+    (Tab::Data, "folder-open", "数据与更新"),
+    (Tab::Skills, "star", "技能"),
+];
+
+/// The width of the list of parts.
+const NAV_W: f32 = 180.;
+
+impl Tab {
+    /// A part by the name a dev step gives it.
+    pub fn named(name: &str) -> Tab {
+        match name {
+            "appearance" | "general" => Tab::Appearance,
+            "automation" => Tab::Automation,
+            "notify" => Tab::Notify,
+            "network" => Tab::Network,
+            "data" => Tab::Data,
+            "skills" => Tab::Skills,
+            _ => Tab::Models,
+        }
+    }
 }
 
 /// What the page holds besides the settings themselves: the fields of the provider on show.
@@ -78,6 +116,14 @@ pub fn interval_label(minutes: u32) -> String {
         0 => t("关闭").to_string(),
         m if m < 60 => tf!("每 {m} 分钟", "Every {m} min"),
         m => tf!("每 {} 小时", "Every {} h", m / 60),
+    }
+}
+
+/// The automatic look for long tasks in words: an interval, or along with the automatic inspection.
+pub fn long_auto_label(minutes: Option<u32>) -> String {
+    match minutes {
+        None => t("随机群巡检").to_string(),
+        Some(minutes) => interval_label(minutes),
     }
 }
 
@@ -150,6 +196,9 @@ impl Workspace {
             }
             Cmd::Quit => return cx.quit(),
             Cmd::SetAutoInspect(minutes) => self.settings.auto_inspect_minutes = minutes,
+            Cmd::SetAutoAccounts(minutes) => self.settings.auto_accounts_minutes = minutes,
+            Cmd::SetAutoSecurity(minutes) => self.settings.auto_security_minutes = minutes,
+            Cmd::SetAutoLong(minutes) => self.settings.auto_long_minutes = minutes,
             Cmd::SetDiskScan(minutes) => self.settings.disk_scan_minutes = minutes,
             Cmd::SetLongHours(hours) => self.settings.long_job_hours = hours,
             Cmd::PickChatModel(id) => self.settings.chat_model = id,
@@ -194,24 +243,46 @@ impl Workspace {
 
     pub fn render_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let tab = self.settings_view.tab;
-        let tabs = segmented(vec![
-            (div().id("settings-tab-models").child(t("模型")).on_click(self.on(Cmd::SetSettingsTab(Tab::Models), cx)), tab == Tab::Models),
-            (div().id("settings-tab-general").child(t("通用")).on_click(self.on(Cmd::SetSettingsTab(Tab::General), cx)), tab == Tab::General),
-            (div().id("settings-tab-skills").child(t("技能")).on_click(self.on(Cmd::SetSettingsTab(Tab::Skills), cx)), tab == Tab::Skills),
-        ])
-        .w(px(240.));
+        let nav = div().id("settings-nav").flex().flex_col().flex_none().w(px(NAV_W)).h_full().overflow_y_scroll().px(px(8.)).py(px(10.)).gap(px(1.)).border_r_1().border_color(Theme::line()).children(TABS.iter().map(|(part, icon, label)| {
+            let active = *part == tab;
+            div()
+                .id(SharedString::from(format!("settings-tab-{label}")))
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(9.))
+                .h(text_px(34.))
+                .px(px(10.))
+                .rounded(px(7.))
+                .cursor_pointer()
+                .when(active, |d| d.bg(Theme::accent_soft()).font_weight(FontWeight::MEDIUM))
+                .hover(|s| s.bg(Theme::hover()))
+                .on_click(self.on(Cmd::SetSettingsTab(*part), cx))
+                .child(ui::icon(icon, 15., if active { Theme::accent() } else { Theme::text_secondary() }))
+                .child(div().flex_1().min_w_0().truncate().child(t(label).to_string()))
+        }));
         let body = match tab {
             Tab::Models => self.render_models(window, cx),
-            Tab::General => self.render_general(window, cx),
+            Tab::Appearance => self.render_appearance(cx),
+            Tab::Automation => self.render_automation(cx),
+            Tab::Notify => self.render_webhooks(cx).into_any_element(),
+            Tab::Network => self.render_network(window, cx),
+            Tab::Data => self.render_data(cx),
             Tab::Skills => self.render_skills(cx),
         };
+        let content = div().id("settings-body").flex().flex_col().flex_1().min_w_0().h_full().overflow_y_scroll().track_scroll(&self.settings_view.scroll).child(div().flex().flex_col().w_full().max_w(px(860.)).px(px(24.)).py(px(20.)).gap(px(20.)).child(body));
         div()
             .flex()
             .flex_col()
             .size_full()
-            .child(self.page_head(t("设置"), t("模型服务、外观和助手可以读的技能；都只保存在这台电脑上"), vec![tabs.into_any_element()], cx))
-            .child(div().id("settings-body").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.settings_view.scroll).child(div().flex().flex_col().w_full().max_w(px(860.)).px(px(24.)).py(px(20.)).gap(px(20.)).child(body)))
+            .child(self.page_head(t("设置"), t("模型服务、外观、自动巡检、通知和技能；都只保存在这台电脑上"), vec![], cx))
+            .child(div().flex().flex_1().min_h_0().child(nav).child(content))
             .into_any_element()
+    }
+
+    /// A label at the left of a setting and its control.
+    fn setting_row(label: &str, control: AnyElement) -> Div {
+        div().flex().items_center().gap(px(16.)).child(div().w(px(120.)).flex_none().text_color(Theme::text_secondary()).child(label.to_string())).child(control)
     }
 
     /// A titled block of the page.
@@ -296,7 +367,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_general(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_appearance(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let settings = &self.settings;
         let appearance = segmented(vec![
             (div().id("appearance-system").child(t("跟随系统")).on_click(self.on(Cmd::SetAppearance(""), cx)), settings.appearance.is_empty()),
@@ -313,32 +384,58 @@ impl Workspace {
             .child(div().w(px(40.)).text_center().child(format!("{:.0}", settings.font_size)))
             .child(ui::secondary_button("font-larger", "A+").h(text_px(28.)).on_click(self.on(Cmd::SetFontSize(settings.font_size + 1.), cx)));
         let contrast = div().id("contrast").flex().items_center().gap(px(8.)).cursor_pointer().on_click(self.on(Cmd::ToggleContrast, cx)).child(switch(settings.high_contrast)).child(t("更强的文字和分隔线"));
+        let row = Self::setting_row;
+        Self::section(t("外观"), t("主题、语言和字号；改了立即生效。"))
+            .child(row(t("主题"), appearance.into_any_element()))
+            .child(row(t("语言"), language.into_any_element()))
+            .child(row(t("字号"), size.into_any_element()))
+            .child(row(t("高对比度"), contrast.into_any_element()))
+            .into_any_element()
+    }
+
+    /// 自动巡检 for every page that has it, and whether the program goes on after the window closes.
+    fn render_automation(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let settings = &self.settings;
+        let row = Self::setting_row;
+        let pick = |id: &'static str, label: String, menu: MenuKind, this: &Self, cx: &mut Context<Self>| ui::secondary_button(id, label).child(ui::icon("chevron-down", 12., Theme::text_tertiary())).on_click(this.on_menu(menu, cx)).into_any_element();
         let keep = div().id("keep-running").flex().items_center().gap(px(8.)).cursor_pointer().on_click(self.on(Cmd::ToggleKeepRunning, cx)).child(switch(settings.keep_running)).child(t("关闭窗口后继续运行"));
         let background = if cfg!(target_os = "macos") {
             Self::section(t("后台运行"), t("关闭窗口后程序留在后台，自动巡检、例行任务、定时磁盘扫描和外部通知照常进行。点 Dock 上的图标回到窗口，⌘Q 退出。")).child(keep)
         } else {
             Self::section(t("后台运行"), t("关闭按钮只把窗口最小化，自动巡检、例行任务、定时磁盘扫描和外部通知照常进行。要退出就用这里的按钮。")).child(div().flex().items_center().gap(px(16.)).child(keep).when(settings.keep_running, |d| d.child(ui::secondary_button("quit", t("退出 WispOps")).h(text_px(28.)).on_click(self.on(Cmd::Quit, cx)))))
         };
-        let row = |label: &str, control: AnyElement| div().flex().items_center().gap(px(16.)).child(div().w(px(120.)).flex_none().text_color(Theme::text_secondary()).child(label.to_string())).child(control);
         div()
             .flex()
             .flex_col()
             .gap(px(24.))
-            .child(Self::section(t("外观"), "").child(row(t("主题"), appearance.into_any_element())).child(row(t("语言"), language.into_any_element())).child(row(t("字号"), size.into_any_element())).child(row(t("高对比度"), contrast.into_any_element())))
             .child(
-                Self::section(t("自动巡检"), t("程序运行时，每台服务器距上次巡检超过这个间隔就以只读方式、不使用 sudo 巡检一次并写入历史；机群总览据此显示状态和趋势。不调用模型。"))
-                    .child(row(t("间隔"), ui::secondary_button("auto-inspect", interval_label(settings.auto_inspect_minutes)).child(ui::icon("chevron-down", 12., Theme::text_tertiary())).on_click(self.on_menu(MenuKind::AutoInspect, cx)).into_any_element())),
+                Self::section(t("自动巡检"), t("程序运行时，每台服务器距上次巡检超过这个间隔就以只读方式、不使用 sudo 巡检一次并写入历史；机群总览据此显示状态和趋势。用户、长时任务和安全各有自己的间隔，做的和页面上的按钮一样：能以 root 读的服务器以 root 读取，记入审计。都不调用模型。"))
+                    .child(row(t("机群总览"), pick("auto-inspect", interval_label(settings.auto_inspect_minutes), MenuKind::AutoInspect, self, cx)))
+                    .child(row(t("用户"), pick("auto-accounts", interval_label(settings.auto_accounts_minutes), MenuKind::AutoAccounts, self, cx)))
+                    .child(row(t("长时任务"), pick("auto-long", long_auto_label(settings.auto_long_minutes), MenuKind::AutoLong, self, cx)))
+                    .child(row(t("安全"), pick("auto-security", interval_label(settings.auto_security_minutes), MenuKind::AutoSecurity, self, cx))),
             )
             .child(background)
-            .child(self.render_webhooks(cx))
-            .child(Self::section(t("网络"), t("模型请求、更新检查、外部通知和设备同步走的代理（发往本机的请求不走）。SSH 连接不受它影响，仍按 ~/.ssh/config。")).child(row(t("全局代理"), div().w(px(420.)).child(ui::field(&self.settings_view.proxy, window, cx)).into_any_element())))
-            .child(self.render_sync(window, cx))
+            .into_any_element()
+    }
+
+    /// The proxy, and the device sync that goes through it.
+    fn render_network(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let proxy = Self::section(t("网络"), t("模型请求、更新检查、外部通知和设备同步走的代理（发往本机的请求不走）。SSH 连接不受它影响，仍按 ~/.ssh/config。")).child(Self::setting_row(t("全局代理"), div().w(px(420.)).child(ui::field(&self.settings_view.proxy, window, cx)).into_any_element()));
+        div().flex().flex_col().gap(px(24.)).child(proxy).child(self.render_sync(window, cx)).into_any_element()
+    }
+
+    /// Where the data is kept, the updates, and which version this is.
+    fn render_data(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(24.))
             .child(
                 Self::section(t("数据"), t("清单、密码库、操作审计、巡检历史和对话都在这个文件夹里。清单文件 inventory.yml 可以手写，保存后下一次操作即生效。"))
                     .child(div().flex().items_center().gap(px(10.)).child(div().flex_1().min_w_0().truncate().font_family(theme::MONO_FONT).text_size(text_px(12.)).text_color(Theme::text_secondary()).child(self.fleet.data_dir().display().to_string())).child(ui::secondary_button("reveal-data", t("打开文件夹")).h(text_px(28.)).on_click(self.on(Cmd::RevealData, cx)))),
             )
             .child(self.render_update_section(cx))
-            .child(div().text_size(text_px(12.)).text_color(Theme::text_placeholder()).child(format!("WispOps {}", env!("CARGO_PKG_VERSION"))))
             .into_any_element()
     }
 

@@ -6,12 +6,16 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::logins::{LoginReport, parse_logins};
+use crate::quotas::{QuotaReport, parse_quotas};
 use crate::sections::parse_sections;
 
 /// The most lines of each database the script prints; a directory with more is cut there.
 pub const MAX_LINES: usize = 5000;
 
-pub const ACCOUNTS_SCRIPT: &str = r#"export LC_ALL=C
+/// The accounts, then their logins (`logins`) and their disk quotas (`quotas`), in one run.
+pub const ACCOUNTS_SCRIPT: &str = concat!(
+    r#"export LC_ALL=C
 db() { if command -v getent >/dev/null 2>&1; then getent "$1"; else cat "/etc/$1"; fi 2>/dev/null | head -n 5000; }
 echo @@whoami
 id -u
@@ -27,8 +31,11 @@ if [ -r /etc/shadow ]; then
 fi
 echo @@who
 who 2>/dev/null | awk '{ print $1 }' | head -n 2000
-echo @@end
-"#;
+"#,
+    include_str!("scripts/logins.sh"),
+    include_str!("scripts/quotas.sh"),
+    "echo @@end\n"
+);
 
 /// What a password is, as far as `shadow` tells.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +112,8 @@ pub struct AccountsReport {
     pub shadow_readable: bool,
     /// A database had more lines than the script prints.
     pub truncated: bool,
+    pub logins: LoginReport,
+    pub quotas: QuotaReport,
 }
 
 impl AccountsReport {
@@ -162,7 +171,7 @@ pub fn parse_accounts(output: &str) -> Option<AccountsReport> {
         accounts.push(Account { name: name.into(), uid, gid, primary_group, groups, gecos: gecos.split(',').next().unwrap_or("").into(), home: home.into(), shell: shell.into(), password, changed_day, expires_day, sessions: sessions.get(name).copied().unwrap_or(0) });
     }
     let truncated = [sections.get("passwd").len(), sections.get("group").len()].iter().any(|count| *count >= MAX_LINES);
-    Some(AccountsReport { accounts, uid_min, as_root, shadow_readable: sections.has("shadow"), truncated })
+    Some(AccountsReport { accounts, uid_min, as_root, shadow_readable: sections.has("shadow"), truncated, logins: parse_logins(&sections), quotas: parse_quotas(&sections) })
 }
 
 #[cfg(test)]
@@ -204,6 +213,8 @@ mod tests {
     fn the_script_never_prints_a_hash() {
         // The second field of shadow is reduced to a word inside awk; nothing else reads the file.
         assert_eq!(ACCOUNTS_SCRIPT.matches("/etc/shadow").count(), 2);
+        assert_eq!(ACCOUNTS_SCRIPT.matches("echo @@end").count(), 1);
+        assert!(ACCOUNTS_SCRIPT.ends_with("fi\necho @@end\n"));
         assert!(ACCOUNTS_SCRIPT.contains("print $1 \":\" s \":\" $3 \":\" $8"));
     }
 }
