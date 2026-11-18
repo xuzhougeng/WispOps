@@ -480,6 +480,29 @@ impl Askpass {
     }
 }
 
+/// What starts an interactive login: the program, its arguments and its environment. The
+/// password helper, if any, stays in place until `finish`, which the session calls once the
+/// login is over or the session ends.
+pub struct Interactive {
+    pub program: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    askpass: Option<Askpass>,
+}
+
+impl Interactive {
+    /// Take the password helper away; safe to call when there is none.
+    pub fn finish(&mut self) {
+        if let Some(askpass) = self.askpass.take() { askpass.cleanup() }
+    }
+}
+
+impl Drop for Interactive {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
 /// Bounded output capture that keeps the head of the stream.
 #[derive(Default)]
 struct Capture {
@@ -671,27 +694,69 @@ impl SshRunner {
     /// The argv for one host; the destination always follows `--`, so it cannot be parsed as an option.
     pub fn argv(&self, host: &Host, sudo: bool, with_password: bool) -> Vec<String> {
         let mut args: Vec<String> = vec!["-T".into(), "-o".into(), format!("ConnectTimeout={}", self.spec.connect_timeout_sec)];
+        if host.uses_password() {
+            // StrictHostKeyChecking=accept-new: with forced askpass, a host-key question would receive the password as its answer.
+            for value in ["BatchMode=no", "PreferredAuthentications=password,keyboard-interactive", "PubkeyAuthentication=no", "NumberOfPasswordPrompts=1", "StrictHostKeyChecking=accept-new"] {
+                args.extend(["-o".into(), value.to_string()]);
+            }
+        } else {
+            args.extend(["-o".into(), "BatchMode=yes".to_string()]);
+        }
+        self.connection_args(host, &mut args);
+        if !sudo {
+            args.push("sh -s".into());
+        } else if with_password {
+            args.push(password_sudo_command(host.sudo_user.as_deref()));
+        } else {
+            args.push(format!("sudo -n{} -- sh -s", host.sudo_user.as_ref().map(|user| format!(" -u {}", shell_quote(user))).unwrap_or_default()));
+        }
+        args
+    }
+
+    /// The arguments of an interactive login shell on `host`, in a terminal (`-tt`). A key host
+    /// is not in batch mode: a passphrase or a new host key is answered in the terminal by the
+    /// person. A password host answers its one password prompt through askpass, as `argv` does.
+    pub fn interactive_argv(&self, host: &Host) -> Vec<String> {
+        let mut args: Vec<String> = vec!["-tt".into(), "-o".into(), format!("ConnectTimeout={}", self.spec.connect_timeout_sec), "-o".into(), "ServerAliveInterval=30".into()];
+        if host.uses_password() {
+            for value in ["PreferredAuthentications=password,keyboard-interactive", "PubkeyAuthentication=no", "NumberOfPasswordPrompts=1", "StrictHostKeyChecking=accept-new"] {
+                args.extend(["-o".into(), value.to_string()]);
+            }
+        }
+        self.connection_args(host, &mut args);
+        args
+    }
+
+    /// What starts an interactive login shell on `host`: the program, its arguments and the
+    /// environment that answers the password prompt. Refused while the host's logins are paused,
+    /// or for a password host without its password.
+    pub fn interactive(&self, host: &Host, login_password: Option<&str>) -> Result<Interactive, String> {
+        if let Some(blocked) = self.guard.check(&host.name) { return Err(blocked) }
+        let askpass = match login_password.filter(|_| host.uses_password()) {
+            Some(password) => Some(Askpass::create(password).map_err(|error| format!("cannot prepare the password login helper: {error}"))?),
+            None if host.uses_password() => return Err(format!("{} uses password login but no password is available; link a login credential to it", host.name)),
+            None => None,
+        };
+        let mut env: Vec<(String, String)> = self.env.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+        if let Some(askpass) = &askpass { env.extend(askpass.env.iter().cloned()) }
+        Ok(Interactive { program: self.spec.binary.clone(), args: self.interactive_argv(host), env, askpass })
+    }
+
+    /// The options every connection to `host` shares, its destination last.
+    fn connection_args(&self, host: &Host, args: &mut Vec<String>) {
         let option = |args: &mut Vec<String>, value: String| {
             args.push("-o".into());
             args.push(value);
         };
-        if host.uses_password() {
-            // StrictHostKeyChecking=accept-new: with forced askpass, a host-key question would receive the password as its answer.
-            for value in ["BatchMode=no", "PreferredAuthentications=password,keyboard-interactive", "PubkeyAuthentication=no", "NumberOfPasswordPrompts=1", "StrictHostKeyChecking=accept-new"] {
-                option(&mut args, value.to_string());
-            }
-        } else {
-            option(&mut args, "BatchMode=yes".to_string());
-        }
         if let Some(control_path) = &self.control_path {
-            option(&mut args, "ControlMaster=auto".to_string());
-            option(&mut args, format!("ControlPath={control_path}"));
-            option(&mut args, format!("ControlPersist={}s", self.spec.control_persist_sec));
+            option(args, "ControlMaster=auto".to_string());
+            option(args, format!("ControlPath={control_path}"));
+            option(args, format!("ControlPersist={}s", self.spec.control_persist_sec));
         }
         if let Some(identity) = &host.identity_file {
             args.push("-i".into());
             args.push(expand_home(identity));
-            option(&mut args, "IdentitiesOnly=yes".to_string());
+            option(args, "IdentitiesOnly=yes".to_string());
         }
         if let Some(jump) = &host.proxy_jump {
             args.push("-J".into());
@@ -708,14 +773,6 @@ impl SshRunner {
         args.extend(self.spec.extra_args.iter().cloned());
         args.push("--".into());
         args.push(host.destination().to_string());
-        if !sudo {
-            args.push("sh -s".into());
-        } else if with_password {
-            args.push(password_sudo_command(host.sudo_user.as_deref()));
-        } else {
-            args.push(format!("sudo -n{} -- sh -s", host.sudo_user.as_ref().map(|user| format!(" -u {}", shell_quote(user))).unwrap_or_default()));
-        }
-        args
     }
 
     /// Run one script on one host and wait for it. Never panics on a missing binary or a dead host:

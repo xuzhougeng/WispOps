@@ -197,6 +197,39 @@ fn keeps_the_destination_after_the_double_dash() {
     assert!(short.path().join("cm").is_dir());
 }
 
+/// An interactive login asks for a terminal and runs no command; a key host may ask the person
+/// (no batch mode), a password host is answered by askpass, and a paused host is refused.
+#[test]
+fn an_interactive_login_is_a_terminal_without_a_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let runner = runner_with(dir.path(), &[]);
+    let mut target = host("box");
+    target.user = Some("ops".to_string());
+    target.port = Some(2222);
+    let argv = runner.interactive_argv(&target);
+    assert_eq!(argv[0], "-tt");
+    assert_eq!(argv[argv.len() - 2..], ["--", "box"]);
+    assert!(!argv.iter().any(|arg| arg.starts_with("BatchMode")), "{argv:?}");
+    assert!(argv.contains(&"-p".to_string()) && argv.contains(&"ops".to_string()));
+    let session = runner.interactive(&target, None).unwrap();
+    assert!(!session.env.iter().any(|(key, _)| key == "SSH_ASKPASS"));
+
+    let mut password = host("box");
+    password.auth = Some(AuthMethod::Password);
+    assert!(runner.interactive(&password, None).is_err());
+    let mut session = runner.interactive(&password, Some("s3cret")).unwrap();
+    assert!(session.args.contains(&"NumberOfPasswordPrompts=1".to_string()));
+    assert!(session.env.iter().any(|(key, value)| key == "SSH_ASKPASS_REQUIRE" && value == "force"));
+    // The password is in no argument and no variable: only the helper hands it over.
+    assert!(!session.args.iter().chain(session.env.iter().map(|(_, value)| value)).any(|text| text.contains("s3cret")));
+    session.finish();
+
+    runner.guard().record("box", "Permission denied (password).");
+    runner.guard().record("box", "Permission denied (password).");
+    runner.guard().record("box", "Permission denied (password).");
+    if runner.guard().check("box").is_some() { assert!(runner.interactive(&target, None).is_err()) }
+}
+
 /// A Unix socket path holds about a hundred bytes: under a long data folder ssh would refuse
 /// every connection with "ControlPath too long", so the sockets go to a short private directory.
 #[cfg(unix)]

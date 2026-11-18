@@ -29,6 +29,8 @@ actions!(workspace, [Dismiss, ToggleAssistant, NewChat, ShowSettings, Refresh, F
 pub enum Page {
     Overview,
     Servers,
+    /// The accounts on each server: read, created in batches, given new passwords.
+    Users,
     Disk,
     LongJobs,
     Security,
@@ -45,6 +47,7 @@ impl Page {
         match self {
             Page::Overview => "机群总览",
             Page::Servers => "服务器",
+            Page::Users => "用户",
             Page::Disk => "磁盘",
             Page::LongJobs => "长时任务",
             Page::Security => "安全",
@@ -60,6 +63,7 @@ impl Page {
         match self {
             Page::Overview => "scan-text",
             Page::Servers => "library",
+            Page::Users => "users",
             Page::Disk => "hard-drive",
             Page::LongJobs => "timer",
             Page::Security => "shield",
@@ -77,6 +81,8 @@ impl Page {
 pub enum Edge {
     /// Between the page and the assistant.
     Chat,
+    /// Between the page and the terminal panel under it.
+    Terminal,
 }
 
 /// What the person says to the assistant wanting to do something a host's policy asks about.
@@ -107,6 +113,7 @@ pub enum Cmd {
     /// Open the assistant with the caret in its box, leaving what is written there.
     FocusChat,
     PickSlash(usize),
+    PickMention(usize),
     AnswerTools(Consent),
     /// Warn about full permission before giving it.
     AskFullPermission,
@@ -119,6 +126,28 @@ pub enum Cmd {
     DeleteChat(String),
     RevokeGrants,
     CopyText(String),
+    // ---- the terminal panel
+    /// Open a login shell on a server in a new tab of the panel.
+    OpenTerminal(String),
+    /// Show the panel, or put it away (its sessions go on).
+    ToggleTerminal,
+    TerminalTab(usize),
+    /// Close a tab, ending its session.
+    CloseTerminal(usize),
+    // ---- users
+    UsersHost(String),
+    /// Show the system accounts too, or hide them again.
+    UsersSystem,
+    /// Read the accounts of the servers a selector names.
+    ReadAccounts(String),
+    /// The dialog that creates accounts.
+    NewUsers,
+    /// The dialog that gives an account a new password: server, account.
+    ResetPassword(String, String),
+    /// In those dialogs: how the password is made (`random`, `same`, `locked`, `written`).
+    UsersPasswordMode(&'static str),
+    /// In those dialogs: the password must be changed at the next login, or not.
+    UsersExpire,
     // ---- servers
     SelectHost(Option<String>),
     AddHost,
@@ -315,6 +344,11 @@ pub struct Workspace {
     pub open_host: Option<String>,
     // ---- disk: the server on show, its scans, and where in them the reader is.
     pub disk: crate::disk::DiskState,
+    // ---- users: the server on show, the filter, the servers being read or changed.
+    pub users: crate::users::UsersState,
+    // ---- the terminal panel under the pages, and whether its session on show is to take the keys.
+    pub terminal: crate::terminal::TerminalPanel,
+    pub terminal_needs_focus: bool,
     // ---- long-running tasks and security: the hosts being checked right now, and the triage laid open.
     pub long_working: HashSet<String>,
     /// The servers whose long-task cards are folded, and each checked server's filter.
@@ -368,11 +402,17 @@ impl Workspace {
         let chat = Chat::new(cx);
         subscriptions.push(cx.subscribe(&chat.input, |this: &mut Self, _, event: &InputEvent, cx| this.chat_input(*event, cx)));
         subscriptions.push(cx.subscribe(&chat.search, |_: &mut Self, _, event: &InputEvent, cx| if *event == InputEvent::Changed { cx.notify() }));
+        let (users, users_filter) = crate::users::UsersState::new(cx);
+        subscriptions.push(cx.subscribe(&users_filter, |_: &mut Self, input, event: &InputEvent, cx| match event {
+            InputEvent::Changed => cx.notify(),
+            InputEvent::Cancel => input.update(cx, |input, cx| input.set_text("", cx)),
+            _ => {}
+        }));
         let mut view = fleet.view();
         view.audit = fleet.audit(None, 24 * 7, crate::audit::AUDIT_ROWS);
         let settings_view = crate::settings::SettingsView::new(&settings, cx);
         let sync = crate::sync::SyncPage::new(&fleet, cx);
-        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
+        let mut this = Workspace { focus, settings, settings_path, fleet, view, page: Page::Overview, chat, skills: vec![], settings_view, sync, selected_host: None, host_search, working: HashSet::new(), probe_errors: HashMap::new(), selected_run: None, open_host: None, disk: Default::default(), users, terminal: Default::default(), terminal_needs_focus: false, long_working: HashSet::new(), long_folded: HashSet::new(), long_filters: HashMap::new(), attack_working: HashSet::new(), open_attack: None, audit_host: None, audit_hours: 24 * 7, running_tasks: HashSet::new(), scripts: Default::default(), modal: None, modal_error: String::new(), modal_busy: false, modal_focus: false, modal_subscriptions: vec![], menu: None, toast, resizing: None, page_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(), updates: Default::default(), _subscriptions: subscriptions };
         // Only the column comes back as it was left: a conversation floating over the page at start is in the way.
         if !this.settings.chat_docked { this.settings.chat_hidden = true }
         this.apply_appearance(window);
@@ -543,6 +583,7 @@ impl Workspace {
             MenuKind::HostActions(name) => {
                 items.push(item(t("巡检"), false, None, Cmd::InspectHosts(name.clone())));
                 items.push(item(t("探测能力"), false, None, Cmd::ProbeHost(name.clone())));
+                items.push(item(t("打开终端"), false, None, Cmd::OpenTerminal(name.clone())));
                 breaks.push(items.len());
                 items.push(item(t("让助手汇报状态"), false, None, Cmd::Suggest(format!("/inspect {name}"))));
                 items.push(item(t("让助手诊断磁盘"), false, None, Cmd::Draft(format!("/disk {name} /"))));
@@ -619,7 +660,8 @@ impl Workspace {
                 self.page = page;
                 self.chat.history = false;
                 if page == Page::Assistant { self.enter_assistant(window, cx) }
-                if matches!(page, Page::Audit | Page::Overview | Page::Tasks | Page::LongJobs | Page::Security) { self.reload(cx) }
+                if matches!(page, Page::Audit | Page::Overview | Page::Tasks | Page::LongJobs | Page::Security | Page::Users) { self.reload(cx) }
+                if page == Page::Users { self.enter_users() }
                 if page == Page::Disk { self.load_disk(cx) }
             }
             Cmd::Refresh => {
@@ -666,6 +708,7 @@ impl Workspace {
                 self.chat.input.update(cx, |input, _| input.focus(window));
             }
             Cmd::PickSlash(at) => self.pick_slash(at, cx),
+            Cmd::PickMention(at) => self.pick_mention(at, cx),
             Cmd::AnswerTools(consent) => self.answer_tools(consent, cx),
             Cmd::AskFullPermission => self.confirm(
                 t("完全授权这次对话？"),
@@ -707,6 +750,8 @@ impl Workspace {
                 self.run_confirmed(*cmd, window, cx);
             }
             cmd @ (Cmd::SelectHost(_) | Cmd::AddHost | Cmd::EditHost(_) | Cmd::RemoveHost(_) | Cmd::ImportSshConfig | Cmd::ToggleImport(_) | Cmd::ToggleImportAll(_) | Cmd::ProbeHost(_) | Cmd::InspectHosts(_) | Cmd::UnblockHost(_) | Cmd::EditPolicy(_) | Cmd::SetPolicy(..) | Cmd::BindCredential(..) | Cmd::PickCredential(_) | Cmd::BindNewCredential | Cmd::TestCredential | Cmd::HostLogin(_) | Cmd::HostPick(_) | Cmd::HostSudoToo | Cmd::HostSearchChanged) => self.run_servers(cmd, window, cx),
+            cmd @ (Cmd::OpenTerminal(_) | Cmd::ToggleTerminal | Cmd::TerminalTab(_) | Cmd::CloseTerminal(_)) => self.run_terminal(cmd, window, cx),
+            cmd @ (Cmd::UsersHost(_) | Cmd::UsersSystem | Cmd::ReadAccounts(_) | Cmd::NewUsers | Cmd::ResetPassword(..) | Cmd::UsersPasswordMode(_) | Cmd::UsersExpire) => self.run_users(cmd, window, cx),
             cmd @ (Cmd::DiskHost(_) | Cmd::AskFullScan(_) | Cmd::DiskScan(..) | Cmd::DiskPath(_) | Cmd::DiskZoom(_) | Cmd::DiskList(_) | Cmd::ToggleDiskFree) => self.run_disk(cmd, cx),
             Cmd::CheckLongJobs(selector) => self.check_long_jobs(selector, false, cx),
             cmd @ (Cmd::ToggleLongHost(_) | Cmd::FoldLongHosts(_) | Cmd::LongUser(..) | Cmd::LongFilter(..)) => self.run_longrun(cmd, cx),
@@ -835,6 +880,11 @@ impl Workspace {
 
     fn drag_chat(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.pressed_button != Some(MouseButton::Left) { return self.end_drag(cx) }
+        if self.resizing == Some(Edge::Terminal) {
+            self.settings.terminal_height = f32::from(window.viewport_size().height) - f32::from(event.position.y);
+            self.settings.terminal_height = self.terminal_height(window);
+            return cx.notify();
+        }
         let width = f32::from(window.viewport_size().width);
         self.settings.chat_width = (width - f32::from(event.position.x)).clamp(340., (width - SIDEBAR_W - 380.).max(340.));
         cx.notify();
@@ -855,6 +905,7 @@ fn bind_keys(cx: &mut App) {
     cx.clear_key_bindings();
     crate::input::bind_keys(cx);
     crate::background::bind_keys(cx);
+    crate::terminal::bind_keys(cx);
     let context = Some("Workspace");
     cx.bind_keys([
         KeyBinding::new("escape", Dismiss, context),
@@ -873,6 +924,7 @@ impl Render for Workspace {
         let page = match self.page {
             Page::Overview => self.render_overview(window, cx),
             Page::Servers => self.render_servers(window, cx),
+            Page::Users => self.render_users(window, cx),
             Page::Disk => self.render_disk(window, cx),
             Page::LongJobs => self.render_longrun(window, cx),
             Page::Security => self.render_security(window, cx),
@@ -886,9 +938,14 @@ impl Render for Workspace {
         let docked = self.chat_docked();
         let chat = (docked || self.chat_floating()).then(|| self.render_chat(window, cx));
         let (chat, float) = if docked { (chat, None) } else { (None, chat) };
-        let float_height = (f32::from(window.viewport_size().height) - 2. * FLOAT_GAP - ui::strip_h()).clamp(280., 640.);
-        let button = (self.settings.chat_hidden && self.page != Page::Assistant).then(|| self.render_chat_button(cx));
+        // With the terminal open, the floating assistant and its button stand above it.
+        let lift = if self.terminal.open { self.terminal_height(window) } else { 0. };
+        let float_height = (f32::from(window.viewport_size().height) - 2. * FLOAT_GAP - ui::strip_h() - lift).clamp(200., 640.);
+        let button = (self.settings.chat_hidden && self.page != Page::Assistant).then(|| self.render_chat_button(lift, cx));
         let chat_width = self.chat_width();
+        let terminal = self.render_terminal(window, cx);
+        // At the top right, as an editor has them; left of the window's own buttons on Windows. Without a drawn title bar (Linux) they stand in the sidebar.
+        let toggles = ui::custom_titlebar().then(|| div().absolute().top_0().right(px(if cfg!(target_os = "windows") { 3. * ui::CONTROL_W + 6. } else { 10. })).h(px(ui::strip_h())).flex().items_center().child(self.render_panel_toggles(cx)));
         div()
             .id("workspace")
             .key_context("Workspace")
@@ -913,7 +970,7 @@ impl Render for Workspace {
                     .size_full()
                     .child(self.render_sidebar(cx))
                     // The page: one plane from the top of the window to its bottom.
-                    .child(div().flex().flex_col().flex_1().min_w_0().h_full().bg(Theme::bg_body()).border_l_1().border_color(Theme::line()).child(ui::title_strip()).child(div().flex().flex_col().flex_1().min_h_0().child(page)))
+                    .child(div().flex().flex_col().flex_1().min_w_0().h_full().bg(Theme::bg_body()).border_l_1().border_color(Theme::line()).child(ui::title_strip()).child(div().flex().flex_col().flex_1().min_h_0().child(page)).children(terminal))
                     .when_some(chat, |d, chat| {
                         d.child(
                             div()
@@ -937,13 +994,13 @@ impl Render for Workspace {
                     }),
             )
             // Floating: a card over the page's corner, which the page under it does not hear through.
-            .children(float.map(|chat| div().id("chat-float").absolute().right(px(FLOAT_GAP)).bottom(px(FLOAT_GAP)).flex().flex_col().w(px(FLOAT_W)).h(px(float_height)).rounded(px(14.)).border_1().border_color(Theme::line_strong()).bg(Theme::bg_body()).shadow(theme::shadow_panel()).overflow_hidden().occlude().child(chat)))
+            .children(float.map(|chat| div().id("chat-float").absolute().right(px(FLOAT_GAP)).bottom(px(FLOAT_GAP + lift)).flex().flex_col().w(px(FLOAT_W)).h(px(float_height)).rounded(px(14.)).border_1().border_color(Theme::line_strong()).bg(Theme::bg_body()).shadow(theme::shadow_panel()).overflow_hidden().occlude().child(chat)))
             .children(button)
             .children(self.render_modal(window, cx))
             .children(self.render_menu(cx))
             .children(self.render_toast())
             // While an edge is held, a layer over everything hears the pointer wherever it goes.
-            .children(self.resizing.map(|_| {
+            .children(self.resizing.map(|edge| {
                 div()
                     .id("resize-layer")
                     .absolute()
@@ -951,10 +1008,11 @@ impl Render for Workspace {
                     .left_0()
                     .size_full()
                     .occlude()
-                    .cursor_col_resize()
+                    .map(|d| if edge == Edge::Terminal { d.cursor_row_resize() } else { d.cursor_col_resize() })
                     .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| this.drag_chat(event, window, cx)))
                     .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.end_drag(cx)))
             }))
+            .children(toggles)
             .children(ui::window_controls(window))
     }
 }
@@ -1003,6 +1061,7 @@ impl Workspace {
                     .child(div().flex().items_center().gap(px(8.)).h(ui::head_h()).px(px(8.)).child(img("branding/app-mark.svg").flex_none().size(px(26.)).rounded(px(6.)).border_1().border_color(Theme::line())).child(div().flex().flex_col().min_w_0().child(div().text_size(text_px(14.)).font_weight(FontWeight::SEMIBOLD).child("WispOps")).child(div().truncate().text_size(text_px(11.)).line_height(text_px(14.)).text_color(Theme::text_tertiary()).child(tf!("{} 台服务器", "{} servers", self.view.hosts.len())))))
                     .child(row(Page::Overview, Some(troubled), self, cx))
                     .child(row(Page::Servers, None, self, cx))
+                    .child(row(Page::Users, None, self, cx))
                     .child(div().h(px(10.)))
                     .child(row(Page::Disk, None, self, cx))
                     .child(row(Page::LongJobs, Some(long), self, cx))
@@ -1014,6 +1073,7 @@ impl Workspace {
                     .child(row(Page::Assistant, None, self, cx))
                     .child(div().flex_1())
                     .children(self.render_update_notice(cx))
+                    .when(!ui::custom_titlebar(), |d| d.child(div().flex().px(px(6.)).child(self.render_panel_toggles(cx))))
                     .child(div().h(px(1.)).mx(px(6.)).my(px(6.)).bg(Theme::line()))
                     .child(row(Page::Vault, None, self, cx))
                     .child(row(Page::Settings, None, self, cx)),
@@ -1022,13 +1082,13 @@ impl Workspace {
 
     /// The assistant put away: a round button at the bottom right, where it floats when opened.
     /// It turns while the assistant works, and carries a dot while a consent card waits.
-    fn render_chat_button(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_chat_button(&self, lift: f32, cx: &mut Context<Self>) -> AnyElement {
         let chat = &self.chat;
         div()
             .id("chat-button")
             .absolute()
             .right(px(FLOAT_GAP))
-            .bottom(px(FLOAT_GAP))
+            .bottom(px(FLOAT_GAP + lift))
             .flex()
             .items_center()
             .justify_center()
@@ -1129,6 +1189,7 @@ impl Workspace {
             "page" => {
                 let page = match arg {
                     "servers" => Page::Servers,
+                    "users" => Page::Users,
                     "disk" => Page::Disk,
                     "jobs" => Page::LongJobs,
                     "security" => Page::Security,
@@ -1174,6 +1235,25 @@ impl Workspace {
             "zoom" => self.run(Cmd::DiskZoom(arg.to_string()), window, cx),
             "disk-list" => self.run(Cmd::DiskList(arg != "map"), window, cx),
             "long-check" => self.run(Cmd::CheckLongJobs(arg.to_string()), window, cx),
+            "users-read" => self.run(Cmd::ReadAccounts(arg.to_string()), window, cx),
+            "terminal" => self.run(Cmd::OpenTerminal(arg.to_string()), window, cx),
+            "toggle-terminal" => self.run(Cmd::ToggleTerminal, window, cx),
+            // `term-type:ls+-la/` types into the terminal on show: `+` is a space, a closing `/` is Enter.
+            "term-type" => {
+                let text = arg.replace('+', " ");
+                let text = match text.strip_suffix('/') { Some(line) => format!("{line}\r"), None => text };
+                if let Some((view, _)) = self.terminal.tabs.get(self.terminal.active) { view.update(cx, |view, cx| view.type_text(&text, cx)) }
+            }
+            "users-host" => self.run(Cmd::UsersHost(arg.to_string()), window, cx),
+            // `users-new:alice+bob` opens the dialog with those names written in.
+            "users-new" => {
+                self.run(Cmd::NewUsers, window, cx);
+                if let Some(Modal::NewUsers(form)) = &self.modal { form.names.update(cx, |input, cx| input.set_text(&arg.replace('+', "\n"), cx)) }
+            }
+            "users-reset" => {
+                let (host, account) = arg.split_once('/').unwrap_or((arg, "root"));
+                self.run(Cmd::ResetPassword(host.to_string(), account.to_string()), window, cx);
+            }
             // `long-fold:<host>`, or `long-fold:all` / `long-fold:none`.
             "long-fold" => self.run(match arg { "all" => Cmd::FoldLongHosts(true), "none" => Cmd::FoldLongHosts(false), host => Cmd::ToggleLongHost(host.to_string()) }, window, cx),
             // `long-filter:<host>=<words, + for spaces>`; `long-user:<host>=<user>`.

@@ -29,6 +29,8 @@ async-channel = "2"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 # Debug builds write the window to a picture (`WISP_OPS_DEV=…,shot:file.png`).
 image = { version = "0.25", default-features = false, features = ["png"] }
+portable-pty = "0.9"
+vt100 = "0.18"
 
 # GPUI 0.2.2 / taffy 0.9.0 / xattr 0.2.3 with the quiet-md patches (Windows
 # IME, CJK line breaking, …); see vendor/PATCHES.md.

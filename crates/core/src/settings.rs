@@ -49,6 +49,8 @@ pub struct Settings {
     pub chat_hidden: bool,
     /// The assistant stands beside the pages as a column at the right, not floating over them.
     pub chat_docked: bool,
+    /// How tall the reader made the terminal panel under the pages; 0 is the height it comes with.
+    pub terminal_height: f32,
     /// Minutes between automatic read-only inspections of every server; 0 is off.
     pub auto_inspect_minutes: u32,
     /// Minutes between the follow-up scans of the directories a first disk scan measured; 0 is off.
@@ -88,7 +90,7 @@ pub const WEBHOOK_TASKS: [&str; 3] = ["always", "problems", "change"];
 impl Default for Settings {
     fn default() -> Self {
         let providers = provider::DEFAULT_PRESETS.iter().filter_map(|key| provider::preset(key)).map(Provider::from_preset).collect();
-        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, chat_docked: false, auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24, auto_update_check: true, keep_running: cfg!(target_os = "macos"), webhooks: vec![], webhook_tasks: "problems".into() };
+        let mut settings = Settings { data_dir: String::new(), providers, chat_model: String::new(), commands: vec![], skills_off: vec![], appearance: String::new(), high_contrast: false, language: Language::default(), font_family: String::new(), cjk_font_family: String::new(), font_size: DEFAULT_FONT_SIZE, proxy: String::new(), chat_width: 0., chat_hidden: false, chat_docked: false, terminal_height: 0., auto_inspect_minutes: 0, disk_scan_minutes: 1440, long_job_hours: 24, auto_update_check: true, keep_running: cfg!(target_os = "macos"), webhooks: vec![], webhook_tasks: "problems".into() };
         settings.tidy();
         settings
     }
@@ -203,6 +205,7 @@ impl Settings {
         }
         if self.model(&self.chat_model).is_none() { self.chat_model.clear() }
         if !self.chat_width.is_finite() || self.chat_width < 0. { self.chat_width = 0. }
+        if !self.terminal_height.is_finite() || self.terminal_height < 0. { self.terminal_height = 0. }
         if !AUTO_INSPECT.contains(&self.auto_inspect_minutes) { self.auto_inspect_minutes = 0 }
         if !DISK_SCAN.contains(&self.disk_scan_minutes) { self.disk_scan_minutes = 1440 }
         if !LONG_JOB_HOURS.contains(&self.long_job_hours) { self.long_job_hours = 24 }

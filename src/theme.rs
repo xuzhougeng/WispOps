@@ -153,6 +153,27 @@ impl Theme {
     /// The off state of a switch and the groove of a segmented control.
     pub fn groove() -> Hsla { if dark() { hsla(0., 0., 1., 0.12) } else { hsla(0., 0., 0., 0.07) } }
     /// The chosen segment of a segmented control, lighter than its groove.
+    // ---- the terminal: its ground, its text, its cursor and the 256 colours programs ask for
+    pub fn term_bg() -> Hsla { pick(0xFBFBFA, 0x18191B) }
+    pub fn term_fg() -> Hsla { pick(0x24292F, 0xD9DBE0) }
+    pub fn term_cursor() -> Hsla { Self::accent().opacity(0.75) }
+    /// An indexed colour: the sixteen of the palette (a light and a dark set), the 6×6×6 cube, the greys.
+    pub fn term_ansi(index: u8) -> Hsla {
+        const LIGHT: [u32; 16] = [0x24292F, 0xCF222E, 0x116329, 0x7D4E00, 0x0969DA, 0x8250DF, 0x1B7C83, 0x6E7781, 0x57606A, 0xA40E26, 0x1A7F37, 0x633C01, 0x218BFF, 0xA475F9, 0x3192AA, 0x8C959F];
+        const DARK: [u32; 16] = [0x484F58, 0xFF7B72, 0x3FB950, 0xD29922, 0x58A6FF, 0xBC8CFF, 0x39C5CF, 0xB1BAC4, 0x6E7681, 0xFFA198, 0x56D364, 0xE3B341, 0x79C0FF, 0xD2A8FF, 0x56D4DD, 0xF0F3F6];
+        match index {
+            0..16 => c(if dark() { DARK } else { LIGHT }[usize::from(index)]),
+            16..232 => {
+                let n = u32::from(index - 16);
+                let level = |v: u32| if v == 0 { 0 } else { 55 + v * 40 };
+                c(level(n / 36) << 16 | level(n / 6 % 6) << 8 | level(n % 6))
+            }
+            _ => {
+                let grey = 8 + u32::from(index - 232) * 10;
+                c(grey << 16 | grey << 8 | grey)
+            }
+        }
+    }
     pub fn segment() -> Hsla { pick(0xFFFFFF, 0x5A5C63) }
 }
 

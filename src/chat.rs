@@ -85,8 +85,9 @@ pub struct Chat {
     created_at: String,
     /// Whose grants these are: one conversation's, gone with it.
     pub session: String,
-    /// Which of the slash commands on offer is picked.
+    /// Which entry of the list over the box (the slash commands, or the servers after `@`) is picked.
     pub slash: usize,
+    /// Escape closed that list; it opens again with the next change to the text.
     slash_closed: bool,
     /// On the assistant's page, the kept conversations are on show in place of the conversation.
     pub history: bool,
@@ -111,6 +112,55 @@ pub struct Chat {
     pub started: Option<Instant>,
 }
 
+/// The most entries the list after `@` shows: typing more narrows it.
+const MENTION_OFFERS: usize = 8;
+
+/// What can be named with `@`: a server, or a group of them (`@gpu`, as a selector writes it).
+pub struct Mentionable {
+    pub name: String,
+    /// What the list says beside the name (the address, the description), and what it is also found by.
+    pub about: String,
+    pub group: bool,
+}
+
+/// The servers of the inventory, then their groups.
+fn mentionables(view: &crate::ops::View) -> Vec<Mentionable> {
+    let mut all: Vec<Mentionable> = view.hosts.iter().map(|host| Mentionable { name: host.name.clone(), about: [host.address.as_str(), host.description.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · "), group: false }).collect();
+    let mut groups: Vec<&str> = view.hosts.iter().flat_map(|host| host.groups.iter().map(String::as_str)).collect();
+    groups.sort_unstable();
+    groups.dedup();
+    for group in groups {
+        let count = view.hosts.iter().filter(|host| host.groups.iter().any(|g| g == group)).count();
+        all.push(Mentionable { name: group.to_string(), about: tf!("{count} 台服务器", "{count} servers"), group: true });
+    }
+    all
+}
+
+/// Where the servers and groups named with `@` stand in `text`, and which they are.
+pub fn mentions_in(text: &str, view: &crate::ops::View) -> Vec<(std::ops::Range<usize>, Mentionable)> {
+    if !text.contains('@') { return vec![] }
+    let all = mentionables(view);
+    let names: Vec<&str> = all.iter().map(|one| one.name.as_str()).collect();
+    ai::mentions(text, &names).into_iter().map(|(range, n)| (range, Mentionable { name: all[n].name.clone(), about: String::new(), group: all[n].group })).collect()
+}
+
+/// What the model is told of the mentions in a request, after it: which
+/// servers and groups they name, and how a selector writes them (`@web-01`
+/// as typed would be read as a group). Empty without any.
+fn mention_note(text: &str, view: &crate::ops::View) -> String {
+    let mut servers: Vec<String> = vec![];
+    let mut groups: Vec<String> = vec![];
+    for (_, one) in mentions_in(text, view) {
+        let list = if one.group { &mut groups } else { &mut servers };
+        if !list.contains(&one.name) { list.push(one.name) }
+    }
+    if servers.is_empty() && groups.is_empty() { return String::new() }
+    let mut parts = vec![];
+    if !servers.is_empty() { parts.push(format!("server{} {} (selector: {})", if servers.len() > 1 { "s" } else { "" }, servers.join(", "), servers.join(","))) }
+    if !groups.is_empty() { parts.push(format!("group{} {} (selector: {})", if groups.len() > 1 { "s" } else { "" }, groups.join(", "), groups.iter().map(|group| format!("@{group}")).collect::<Vec<_>>().join(","))) }
+    format!("\n\n[Mentioned with @: {}. The request is about these; a server is selected by its bare name, without @.]", parts.join("; "))
+}
+
 fn new_session() -> String {
     format!("s{:x}", time::now_millis())
 }
@@ -118,7 +168,7 @@ fn new_session() -> String {
 impl Chat {
     pub fn new(cx: &mut App) -> Chat {
         let input = cx.new(|cx| {
-            let mut input = TextInput::new("让助手巡检、诊断或处理服务器… 输入 / 查看命令", cx).multiline(1);
+            let mut input = TextInput::new("让助手巡检、诊断或处理服务器… 输入 / 查看命令，@ 提及服务器", cx).multiline(1);
             input.submit_on_enter = true;
             input
         });
@@ -129,6 +179,19 @@ impl Chat {
     /// The slash commands to offer for what is in the box right now.
     pub fn slash_list(&self, own: &[ai::Command], cx: &App) -> Vec<ai::Offer> {
         if self.slash_closed { vec![] } else { ai::slash_matches(self.input.read(cx).text(), own) }
+    }
+
+    /// The servers and groups to offer for the `@` the caret stands after, if it stands after one.
+    /// The slash commands, when there are any, are offered instead.
+    pub fn mention_list(&self, view: &crate::ops::View, cx: &App) -> Vec<Mentionable> {
+        if self.slash_closed { return vec![] }
+        let input = self.input.read(cx);
+        let Some((_, typed)) = ai::mention_typed(input.text(), input.caret()) else { return vec![] };
+        let mut all = mentionables(view);
+        let entries: Vec<(&str, &str)> = all.iter().map(|one| (one.name.as_str(), one.about.as_str())).collect();
+        let picked = ai::mention_matches(typed, &entries);
+        let mut taken: Vec<Option<Mentionable>> = all.drain(..).map(Some).collect();
+        picked.into_iter().take(MENTION_OFFERS).filter_map(|n| taken[n].take()).collect()
     }
 
     /// An answer piece that never got any text leaves no empty line behind.
@@ -204,12 +267,15 @@ fn tools_summary(calls: &[&str]) -> String {
 impl Workspace {
     pub fn chat_input(&mut self, event: InputEvent, cx: &mut Context<Self>) {
         let chat = &mut self.chat;
-        let (offered, picked) = (chat.slash_list(&self.settings.commands, cx).len(), chat.slash);
+        let commands = chat.slash_list(&self.settings.commands, cx).len();
+        let offered = if commands > 0 { commands } else { chat.mention_list(&self.view, cx).len() };
+        let picked = chat.slash;
+        let pick = |this: &mut Self, cx: &mut Context<Self>| if commands > 0 { this.pick_slash(picked, cx) } else { this.pick_mention(picked, cx) };
         match event {
-            // Enter on a command in the list takes it; otherwise the message goes.
-            InputEvent::Submit if offered > 0 => return self.pick_slash(picked, cx),
+            // Enter on an entry in the list takes it; otherwise the message goes.
+            InputEvent::Submit if offered > 0 => return pick(self, cx),
             InputEvent::Submit => return self.ask(cx),
-            InputEvent::Tab if offered > 0 => return self.pick_slash(picked, cx),
+            InputEvent::Tab if offered > 0 => return pick(self, cx),
             InputEvent::Changed => {
                 chat.slash_closed = false;
                 chat.slash = 0;
@@ -219,8 +285,8 @@ impl Workspace {
             InputEvent::Cancel => chat.slash_closed = true,
             _ => {}
         }
-        // While the list is on show the arrow keys and Tab are its keys.
-        let choosing = !chat.slash_list(&self.settings.commands, cx).is_empty();
+        // While a list is on show the arrow keys and Tab are its keys.
+        let choosing = !chat.slash_list(&self.settings.commands, cx).is_empty() || !chat.mention_list(&self.view, cx).is_empty();
         chat.input.update(cx, |input, _| input.choosing = choosing);
         cx.notify();
     }
@@ -237,6 +303,23 @@ impl Workspace {
         let text = format!("/{} ", offer.name);
         self.chat.input.update(cx, |input, cx| {
             input.set_text(&text, cx);
+            input.choosing = false;
+        });
+        cx.notify();
+    }
+
+    /// Take one of the servers or groups on offer after `@`: what was typed after it becomes its name.
+    pub fn pick_mention(&mut self, at: usize, cx: &mut Context<Self>) {
+        let offers = self.chat.mention_list(&self.view, cx);
+        let Some(offer) = offers.get(at) else { return };
+        let name = offer.name.clone();
+        self.chat.input.update(cx, |input, cx| {
+            let caret = input.caret();
+            let Some((start, _)) = ai::mention_typed(input.text(), caret) else { return };
+            // The caret ends past a space after the name, so the list does not open on it again.
+            let space = input.text()[caret..].chars().next().filter(|c| c.is_whitespace());
+            let end = caret + space.map_or(0, char::len_utf8);
+            input.replace_text(start..end, &format!("@{name}{}", space.unwrap_or(' ')), cx);
             input.choosing = false;
         });
         cx.notify();
@@ -285,6 +368,8 @@ impl Workspace {
                 return cx.notify();
             }
         };
+        let prompt = prompt + &mention_note(&question, &self.view);
+        let chat = &mut self.chat;
         chat.history = false;
         // A changed protocol starts the wire again from the text of what was said:
         // the model's own turns are only valid in the conversation that produced them.
@@ -766,7 +851,9 @@ impl Workspace {
         while i < chat.messages.len() {
             let content = match &chat.messages[i] {
                 ChatItem::User { text, .. } => {
-                    items.push(div().flex().flex_col().items_end().child(div().max_w(relative(0.88)).px(px(14.)).py(px(9.)).rounded(px(16.)).bg(Theme::groove()).line_height(theme::body_line(21.)).child(text.clone())).into_any_element());
+                    // The servers and groups it names with `@` in the accent.
+                    let named: Vec<(std::ops::Range<usize>, HighlightStyle)> = mentions_in(text, &self.view).into_iter().map(|(range, _)| (range, HighlightStyle { color: Some(Theme::accent()), font_weight: Some(FontWeight::MEDIUM), ..Default::default() })).collect();
+                    items.push(div().flex().flex_col().items_end().child(div().max_w(relative(0.88)).px(px(14.)).py(px(9.)).rounded(px(16.)).bg(Theme::groove()).line_height(theme::body_line(21.)).child(StyledText::new(text.clone()).with_highlights(named))).into_any_element());
                     i += 1;
                     continue;
                 }
@@ -954,7 +1041,12 @@ impl Workspace {
         let chat = &self.chat;
         let focused = chat.input.focus_handle(cx).is_focused(window);
         let commands = if focused { chat.slash_list(&self.settings.commands, cx) } else { vec![] };
+        let mentions = if focused && commands.is_empty() { chat.mention_list(&self.view, cx) } else { vec![] };
         let ready = !chat.input.read(cx).text().trim().is_empty();
+        // The servers and groups named with `@` stand on a tint, as they will in the message.
+        let marks = mentions_in(chat.input.read(cx).text(), &self.view).into_iter().map(|(range, _)| (range, Theme::accent_soft())).collect();
+        chat.input.update(cx, |input, _| input.set_marks(marks));
+        let hint = || div().px(px(8.)).pt(px(5.)).pb(px(2.)).mt(px(3.)).border_t_1().border_color(Theme::line()).text_size(text_px(11.)).text_color(Theme::text_placeholder()).child(t("↑↓ 选择 · Enter 或 Tab 确认 · Esc 关闭"));
         let round = |id: &'static str, icon_name: &'static str, lit: bool| {
             div().id(id).flex().flex_none().items_center().justify_center().size(px(30.)).rounded(px(15.)).bg(if lit { Theme::accent() } else { Theme::groove() }).cursor_pointer().hover(|s| s.opacity(0.88)).child(ui::icon(icon_name, 15., if lit { Theme::on_accent() } else { Theme::text_tertiary() }))
         };
@@ -992,7 +1084,36 @@ impl Workspace {
                                 .child(div().flex_1().min_w_0().truncate().text_color(Theme::text_secondary()).child(if command.custom { command.about.clone() } else { t(&command.about).to_string() }))
                                 .when(command.custom, |d| d.child(div().flex_none().px(px(6.)).rounded(px(5.)).bg(Theme::groove()).text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(t("自定义"))))
                         }))
-                        .child(div().px(px(8.)).pt(px(5.)).pb(px(2.)).mt(px(3.)).border_t_1().border_color(Theme::line()).text_size(text_px(11.)).text_color(Theme::text_placeholder()).child(t("↑↓ 选择 · Enter 或 Tab 确认 · Esc 关闭"))),
+                        .child(hint()),
+                )
+            })
+            .when(!mentions.is_empty(), |d| {
+                d.child(
+                    ui::popover()
+                        .absolute()
+                        .left(px(16.))
+                        .right(px(16.))
+                        .bottom_full()
+                        .max_w(px(520.))
+                        .children(mentions.iter().enumerate().map(|(n, one)| {
+                            div()
+                                .id(SharedString::from(format!("mention-{}-{}", if one.group { "group" } else { "host" }, one.name)))
+                                .flex()
+                                .items_center()
+                                .gap(px(10.))
+                                .h(text_px(32.))
+                                .px(px(8.))
+                                .rounded(px(6.))
+                                .cursor_pointer()
+                                .when(n == chat.slash, |d| d.bg(Theme::hover()))
+                                .hover(|s| s.bg(Theme::hover()))
+                                .on_click(self.on(Cmd::PickMention(n), cx))
+                                .child(ui::icon(if one.group { "list" } else { "library" }, 13., Theme::text_tertiary()))
+                                .child(div().flex_none().max_w(relative(0.5)).truncate().font_weight(FontWeight::MEDIUM).text_color(Theme::accent()).child(format!("@{}", one.name)))
+                                .child(div().flex_1().min_w_0().truncate().text_color(Theme::text_secondary()).child(one.about.clone()))
+                                .when(one.group, |d| d.child(div().flex_none().px(px(6.)).rounded(px(5.)).bg(Theme::groove()).text_size(text_px(11.)).text_color(Theme::text_tertiary()).child(t("分组"))))
+                        }))
+                        .child(hint()),
                 )
             })
             .child(
@@ -1030,7 +1151,18 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring in gpui's own `test` attribute.
-    use super::tools_summary;
+    use super::{mention_note, tools_summary};
+    use crate::ops::{HostView, View};
+
+    #[test]
+    fn mentions_are_named_for_the_model() {
+        let host = |name: &str, groups: &[&str]| HostView { name: name.into(), groups: groups.iter().map(|g| g.to_string()).collect(), ..Default::default() };
+        let view = View { hosts: vec![host("服务器A", &["gpu"]), host("web-01", &["gpu"])], ..Default::default() };
+        assert_eq!(mention_note("看下 @服务器A 的运行情况", &view), "\n\n[Mentioned with @: server 服务器A (selector: 服务器A). The request is about these; a server is selected by its bare name, without @.]");
+        let both = mention_note("@web-01 和 @gpu 比一比 @web-01", &view);
+        assert!(both.contains("server web-01 (selector: web-01); group gpu (selector: @gpu)"), "{both}");
+        assert_eq!(mention_note("root@web-01 没有提及", &view), "");
+    }
 
     #[test]
     fn tool_runs_in_a_line() {
