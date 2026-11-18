@@ -117,6 +117,8 @@ pub enum Modal {
     /// The task template library, to start a task from.
     Templates,
     Template(crate::templates::TemplateForm),
+    NewUsers(crate::users::NewUsersForm),
+    ResetPassword(crate::users::ResetForm),
 }
 
 impl Modal {
@@ -137,6 +139,8 @@ impl Modal {
             Modal::Policy(PolicyForm { host: _, values: _, inherited: _ }) | Modal::Bind(BindForm { host: _, sudo: _, picked: _, testing: _, tested: _, new: None }) | Modal::Import(ImportForm { rows: _ }) => vec![],
             Modal::Confirm { .. } | Modal::Text { .. } | Modal::Templates => vec![],
             Modal::Webhook(form) => form.inputs(),
+            Modal::NewUsers(form) => form.inputs(),
+            Modal::ResetPassword(form) => form.inputs(),
         }
     }
 }
@@ -211,6 +215,7 @@ impl Workspace {
             Modal::Credential(_) => self.submit_vault(window, cx),
             Modal::Task(_) => self.submit_task(window, cx),
             Modal::Webhook(_) => self.submit_webhook(cx),
+            Modal::NewUsers(_) | Modal::ResetPassword(_) => self.submit_users(cx),
         };
         match done {
             Ok(()) => self.close_modal(window, cx),
@@ -442,6 +447,7 @@ impl Workspace {
             Modal::Webhook(form) => self.webhook_form_body(form, window, cx),
             Modal::Templates => self.template_library_body(cx),
             Modal::Template(form) => self.template_form_body(form, window, cx),
+            modal @ (Modal::NewUsers(_) | Modal::ResetPassword(_)) => self.users_form_body(modal, window, cx),
         };
         let reading = label.is_none();
         // An import with nothing ticked has nothing to do: the button says so before it is pressed.

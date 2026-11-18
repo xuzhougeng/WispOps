@@ -8,6 +8,7 @@
 
 #[macro_use]
 mod i18n;
+mod accounts;
 mod app;
 mod assets;
 mod assistant;
@@ -33,11 +34,13 @@ mod settings;
 mod sync;
 mod tasks;
 mod templates;
+mod terminal;
 mod theme;
 mod tools;
 mod ui;
 mod updates;
 mod updates_view;
+mod users;
 mod vault;
 mod webhooks;
 

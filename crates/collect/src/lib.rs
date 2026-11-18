@@ -3,6 +3,8 @@
 //! here opens a connection, reads a file or keeps state; callers run the scripts over SSH and
 //! store the snapshots.
 
+/// The accounts of a host: users, groups, password states (never the hashes), sessions.
+pub mod accounts;
 /// Failed logins by source, account and hour: the tail of the security triage the security page runs.
 pub mod attacks;
 /// Disk-full diagnosis of one path: usage, growth, open and deleted files, reclaimable caches.

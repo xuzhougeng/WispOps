@@ -3,6 +3,8 @@
 //! Everything here is synchronous. Functions that read the clock take `now` (epoch milliseconds)
 //! or have an `_at(now)` variant. Errors meant for a person or the model are `Result<T, String>`.
 
+/// Account changes the window makes as root: checks, generated passwords, create and reset scripts.
+pub mod accounts;
 /// Managed changes: backup → apply → verify → rollback as one remote shell transaction.
 pub mod change;
 /// Five-field cron expressions evaluated in IANA time zones.

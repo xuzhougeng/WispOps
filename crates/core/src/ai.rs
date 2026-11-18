@@ -658,6 +658,77 @@ pub fn slash_matches(input: &str, custom: &[Command]) -> Vec<Offer> {
     found
 }
 
+// ---- mentions
+
+/// A character that goes on a word written in ASCII: an `@` after one is an
+/// address (`root@web-01`), and a name followed by one is a longer name.
+fn wordish(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+/// Whether an `@` at byte `at` opens a mention: at the start, or after
+/// anything but a letter or digit of ASCII (so `看下@服务器A` mentions and
+/// `root@web-01` does not).
+fn opens_mention(text: &str, at: usize) -> bool {
+    text[..at].chars().next_back().is_none_or(|c| !(wordish(c) || c == '.'))
+}
+
+/// The mention being typed with the caret at byte `caret`: where its `@`
+/// stands and what follows it up to the caret, with no space in between.
+pub fn mention_typed(text: &str, caret: usize) -> Option<(usize, &str)> {
+    let before = text.get(..caret)?;
+    let at = before.rfind('@')?;
+    let typed = &before[at + 1..];
+    (!typed.contains(char::is_whitespace) && opens_mention(text, at)).then_some((at, typed))
+}
+
+/// The mentions in `text` of any of `names`: where each stands (its `@`
+/// included) and which name it is. The longest name that fits is taken, the
+/// first of equals; what follows must not go on the name (`@web-01` is not
+/// in `@web-012`, but is in `@web-01，` and `@web-01.`).
+pub fn mentions(text: &str, names: &[&str]) -> Vec<(std::ops::Range<usize>, usize)> {
+    let mut found = vec![];
+    let mut from = 0;
+    while let Some(at) = text[from..].find('@').map(|i| from + i) {
+        from = at + 1;
+        if !opens_mention(text, at) { continue }
+        let rest = &text[at + 1..];
+        let ends = |name: &str| {
+            let after = &rest[name.len()..];
+            let mut next = after.chars();
+            match next.next() {
+                None => true,
+                Some('.') => !next.next().is_some_and(wordish),
+                Some(c) => !wordish(c),
+            }
+        };
+        let best = names.iter().enumerate().filter(|(_, name)| !name.is_empty() && rest.starts_with(**name) && ends(name)).fold(None, |best: Option<(usize, usize)>, (n, name)| match best {
+            Some((_, len)) if len >= name.len() => best,
+            _ => Some((n, name.len())),
+        });
+        if let Some((n, len)) = best {
+            found.push((at..at + 1 + len, n));
+            from = at + 1 + len;
+        }
+    }
+    found
+}
+
+/// Of `names` (each with words that describe it), the ones that fit what
+/// was typed after `@`: those that start with it first, then those that
+/// contain it, then those whose description does; case is ignored. Nothing
+/// typed offers them all, in their order. Gives places in `names`.
+pub fn mention_matches(typed: &str, names: &[(&str, &str)]) -> Vec<usize> {
+    let typed = typed.to_lowercase();
+    let rank = |(name, about): &(&str, &str)| {
+        let name = name.to_lowercase();
+        if name.starts_with(&typed) { Some(0) } else if name.contains(&typed) { Some(1) } else if about.to_lowercase().contains(&typed) { Some(2) } else { None }
+    };
+    let mut ranked: Vec<(usize, usize)> = names.iter().enumerate().filter_map(|(n, entry)| rank(entry).map(|rank| (rank, n))).collect();
+    ranked.sort();
+    ranked.into_iter().map(|(_, n)| n).collect()
+}
+
 // ---- what a conversation leaves behind
 
 /// One thing said in a conversation, as it is kept on disk.
@@ -769,5 +840,38 @@ mod tests {
         assert!(offers.iter().any(|offer| offer.name == "clear" && offer.runs), "{offers:?}");
         // A built-in name is not free for a command of the person's own.
         assert!(command_name_problem("clear", std::iter::empty()).is_some());
+    }
+
+    #[test]
+    fn mentions_are_found_where_they_stand() {
+        let names = ["服务器A", "web-01", "web-01.lan", "gpu"];
+        let found = |text: &str| mentions(text, &names).into_iter().map(|(range, n)| (text[range].to_string(), names[n])).collect::<Vec<_>>();
+        assert_eq!(found("看下 @服务器A 的运行情况"), [("@服务器A".to_string(), "服务器A")]);
+        // Chinese runs on without a space; an address is no mention.
+        assert_eq!(found("看下@服务器A的运行情况，root@web-01 不算"), [("@服务器A".to_string(), "服务器A")]);
+        // The longest name that fits, and none that runs on into more of a name.
+        assert_eq!(found("@web-01.lan 和 @web-01. 还有 @web-012"), [("@web-01.lan".to_string(), "web-01.lan"), ("@web-01".to_string(), "web-01")]);
+        assert_eq!(found("@gpu,@web-01"), [("@gpu".to_string(), "gpu"), ("@web-01".to_string(), "web-01")]);
+        assert!(found("@nobody").is_empty());
+    }
+
+    #[test]
+    fn the_mention_being_typed() {
+        assert_eq!(mention_typed("看下 @服务", "看下 @服务".len()), Some(("看下 ".len(), "服务")));
+        assert_eq!(mention_typed("@", 1), Some((0, "")));
+        assert_eq!(mention_typed("看下@", "看下@".len()), Some(("看下".len(), "")));
+        // Past a space, or in an address, there is none.
+        assert_eq!(mention_typed("@web-01 看", "@web-01 看".len()), None);
+        assert_eq!(mention_typed("root@web", 8), None);
+        // The caret decides, not the end of the text.
+        assert_eq!(mention_typed("@web 看看", 4), Some((0, "web")));
+    }
+
+    #[test]
+    fn mention_offers_in_order() {
+        let names = [("db-web", ""), ("web-01", ""), ("gpu-01", "web front"), ("nas", "")];
+        assert_eq!(mention_matches("web", &names), [1, 0, 2]);
+        assert_eq!(mention_matches("", &names), [0, 1, 2, 3]);
+        assert_eq!(mention_matches("WEB-0", &names), [1]);
     }
 }

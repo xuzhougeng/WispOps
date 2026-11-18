@@ -273,6 +273,33 @@ def disk(host, script):
     return "\n".join(out) + "\n"
 
 
+# People with accounts, by host: (name, uid, full name, extra groups, password state, sessions).
+PEOPLE = [("alice", 1001, "Alice Liu", "sudo,docker", "set", 2), ("bob", 1002, "Bob Chen", "docker", "set", 1), ("carol", 1003, "Carol Wang", "docker", "set", 0), ("dave", 1004, "Dave Zhao", "", "locked", 0), ("erin", 1005, "Erin Sun", "", "set", 0), ("frank", 1006, "Frank Li", "", "set", 0), ("grace", 1007, "Grace Zhou", "", "set", 0)]
+
+
+def accounts(host, rooted):
+    """The account listing: the GPU servers have the researchers, the others a few operators."""
+    people = PEOPLE if host.startswith("gpu") else [p for p in PEOPLE if p[0] in ("alice", "frank", "grace")]
+    if host.startswith("gpu") and host != "gpu-01":
+        people = [p for p in people if p[0] != "dave"] + [("intern01", 1010, "", "", "set" if host == "gpu-02" else "empty", 0)]
+    passwd = ["root:x:0:0:root:/root:/bin/bash", "daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin", "sshd:x:110:65534::/run/sshd:/usr/sbin/nologin", "ops:x:900:900:operations:/home/ops:/bin/bash", "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin"]
+    passwd += [f"{name}:x:{uid}:{uid}:{full},,,:/home/{name}:/bin/bash" for name, uid, full, *_ in people]
+    groups = ["root:x:0:", "daemon:x:1:", "nogroup:x:65534:", "ops:x:900:"]
+    members = {}
+    for name, _, _, extra, *_ in people:
+        for group in filter(None, extra.split(",")):
+            members.setdefault(group, []).append(name)
+    members.setdefault("sudo", []).insert(0, "ops")
+    groups += [f"sudo:x:27:{','.join(members['sudo'])}", f"docker:x:998:{','.join(members.get('docker', []))}"]
+    groups += [f"{name}:x:{uid}:" for name, uid, *_ in people]
+    out = ["@@whoami", "0" if rooted else "900", "@@login_uid_min", "1000", "@@passwd"] + passwd + ["@@group"] + groups
+    if rooted:
+        out += ["@@shadow", "root:locked:19800:", "daemon:none:19000:", "sshd:none:19000:", "ops:set:19900:", "nobody:none:19000:"]
+        out += [f"{name}:{state}:{0 if name == 'erin' else 19950}:" for name, _, _, _, state, _ in people]
+    out += ["@@who"] + [name for name, *_, sessions in people for _ in range(sessions if host.startswith("gpu") else 0)] + ["@@end"]
+    return "\n".join(out) + "\n"
+
+
 def main():
     args = sys.argv[1:]
     if args[:1] == ["-G"]:
@@ -297,6 +324,16 @@ def main():
         return 255
     if "echo @@meminfo" in script:
         sys.stdout.write(inspect(host, min(k, RUNS - 1)))
+    elif "echo @@login_uid_min" in script:
+        sys.stdout.write(accounts(host, "sudo" in command))
+    elif "command -v useradd" in script:
+        # Account creation: every name is new except those the listing already has.
+        known = {p[0] for p in PEOPLE} | {"root", "ops"}
+        for name in re.findall(r"^add '([^']+)'", script, re.M):
+            print(f"exists\t{name}" if name in known else f"created\t{name}")
+    elif "| chpasswd" in script:
+        name = re.search(r"printf 'reset\\t%s\\n' '([^']+)'", script).group(1)
+        print(f"reset\t{name}")
     elif "echo @@attacks" in script:
         sys.stdout.write(security(host))
     elif "echo @@uidmin" in script:

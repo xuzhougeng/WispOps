@@ -594,6 +594,7 @@ impl Workspace {
                             .flex()
                             .flex_wrap()
                             .gap(px(6.))
+                            .child(ui::secondary_button("detail-terminal", t("终端")).h(text_px(28.)).child(ui::icon("square-terminal", 12., Theme::text_secondary())).tooltip(ui::tip(t("在下方打开这台服务器的终端：用清单里的地址和密码库里的登录凭据连接"))).on_click(self.on(Cmd::OpenTerminal(name.clone()), cx)))
                             .child(ui::secondary_button("detail-inspect", t("巡检")).h(text_px(28.)).when(working, |b| b.opacity(0.5)).on_click(self.on(Cmd::InspectHosts(name.clone()), cx)))
                             .child(ui::secondary_button("detail-space", t("磁盘占用")).h(text_px(28.)).on_click(self.on(Cmd::DiskHost(name.clone()), cx)))
                             .child(ui::secondary_button("detail-disk", t("诊断磁盘")).h(text_px(28.)).child(ui::icon("sparkle", 12., Theme::accent())).on_click(self.on(Cmd::Draft(format!("/disk {name} /")), cx)))

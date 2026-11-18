@@ -260,6 +260,8 @@ pub struct View {
     pub long_runs: BTreeMap<String, wisp_ops_collect::longrun::LongRunSnapshot>,
     /// The latest security triage of each server that has one.
     pub attacks: BTreeMap<String, attacks::SecuritySnapshot>,
+    /// The accounts last read on each server that has been read.
+    pub accounts: BTreeMap<String, wisp_ops_collect::accounts::AccountsSnapshot>,
     pub inventory_error: Option<String>,
     pub vault_error: Option<String>,
     pub vault_key_place: &'static str,
@@ -532,6 +534,17 @@ impl Fleet {
         results
     }
 
+    /// What starts an interactive login shell on one server for the terminal panel, its login
+    /// password (if it logs in with one) handed to ssh through askpass and nowhere else. The
+    /// session is written in the audit; what is typed in it is not.
+    pub fn terminal(&self, name: &str) -> Result<wisp_ops_engine::ssh::Interactive, String> {
+        let host = self.inventory().host(name).cloned().ok_or_else(|| tf!("清单里没有 {name}。", "{name} is not in the inventory."))?;
+        let password = if host.uses_password() { self.vault.login_password(&host)? } else { None };
+        let session = self.runner.interactive(&host, password.as_deref())?;
+        let _ = self.store.audit(&AuditEntry { at: time::to_iso(time::now_ms()), session: None, tool: "window:terminal".into(), host: host.name.clone(), risk: RiskLevel::Change, sudo: false, authorization: Authorization::Approval, command: "(interactive terminal session opened in the window)".into(), reason: None, status: RunStatus::Ok, exit_code: None, duration_ms: 0 });
+        Ok(session)
+    }
+
     /// The same command on every host.
     pub fn execute_one(&self, hosts: &[Host], script: &str, exec: &Exec) -> Vec<RunResult> {
         self.execute(hosts, &|_| script.to_string(), exec)
@@ -740,7 +753,7 @@ impl Fleet {
 
     pub fn view(&self) -> View {
         // Read before the inventory is held: both look the hosts up themselves.
-        let (long_runs, attacks) = (self.long_runs(), self.attacks());
+        let (long_runs, attacks, accounts) = (self.long_runs(), self.attacks(), self.accounts());
         let loaded = self.loaded.read().unwrap();
         let probes: BTreeMap<String, HostProbe> = self.store.probes().unwrap_or_default();
         let blocks = self.runner.guard().list();
@@ -800,7 +813,7 @@ impl Fleet {
             TaskView { name: task.name.clone(), draft: draft_of(task), managed: loaded.managed_tasks.contains(&task.name), scheduled: timed.is_some(), enabled: entry.is_some(), when: describe_when(task.schedule.as_ref()), next, last: last.map(|record| TaskLast { at: record.at.clone(), problems: record.has_problems(), summary: record.summary() }), error: entry.and_then(|entry| entry.last_error.clone()) }
         }).collect();
         let limits = Limits { gpu_temp: self.thresholds.gpu_temp_warn_c, disk: (self.thresholds.disk_warn_pct, self.thresholds.disk_crit_pct), mem_avail: (self.thresholds.mem_avail_warn_pct, self.thresholds.mem_avail_crit_pct), load_per_core: (self.thresholds.load_per_core_warn, self.thresholds.load_per_core_crit) };
-        View { templates: self.templates(loaded.inventory.tasks()), limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" }, scripts: self.scripts_view() }
+        View { templates: self.templates(loaded.inventory.tasks()), limits, hosts, credentials, tasks, audit: vec![], long_runs, attacks, accounts, inventory_error: loaded.error.clone(), vault_error, vault_key_place: if std::env::var("WISP_OPS_VAULT_KEY").as_deref() == Ok("file") || !cfg!(target_os = "macos") { "数据文件夹的 vault.key 里" } else { "系统钥匙串里" }, scripts: self.scripts_view() }
     }
 
     pub fn audit(&self, host: Option<&str>, hours: u32, limit: usize) -> Vec<AuditRow> {
