@@ -139,7 +139,22 @@ cargo test                                       # 五个 crate 的全部测试
 cargo clippy --all-targets                       # 应当没有警告
 ```
 
-`WISP_OPS_HOME=<目录>` 把数据和 `settings.json` 都放到一个目录里，调试时用它，不碰真实数据。
+`WISP_OPS_HOME=<目录>` 把数据和 `settings.json` 都放到一个目录里，调试时用它，不碰真实数据（PowerShell 里是 `$env:WISP_OPS_HOME = "<目录>"`）。
+
+### Windows：构建出 exe 直接打开
+
+在「x64 Native Tools Command Prompt」或装好 MSVC 构建工具的 PowerShell 里：
+
+```powershell
+cargo build --release
+.\target\release\wisp_ops.exe
+```
+
+之后不用再经过 cargo：在资源管理器里双击 `target\release\wisp_ops.exe` 即可，也可以把它单独复制到任何位置、改名为 `WispOps.exe`、发送到桌面快捷方式或固定到任务栏。这个 exe 是独立的：图标、界面图标和内置技能都编译在里面，运行时不需要旁边有其他文件，数据照常放在 `%USERPROFILE%\.wisp-ops\`。
+
+- 发布构建是图形界面程序，双击不会弹出黑色的控制台窗口；调试构建（`cargo build`）会带一个控制台，用来看日志。
+- 想要和发布页一样的打包（`WispOps.exe` 加许可证，打成 zip），运行 `pwsh -File scripts/package-windows.ps1`，结果在 `dist\WispOps-v<版本>-windows-x64\`。
+- 自己构建的 exe 没有签名，第一次打开可能出现「Windows 已保护你的电脑」，点「更多信息」→「仍要运行」。
 
 ### 重新生成截图
 
